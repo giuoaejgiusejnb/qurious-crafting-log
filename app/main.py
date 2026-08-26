@@ -2,6 +2,7 @@ from pathlib import Path
 
 import flet as ft
 
+from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
 from app.ui.search_view import build_search_view
 
@@ -33,7 +34,7 @@ def main(page: ft.Page) -> None:
 
     page.add(
         ft.Tabs(
-            length=2,
+            length=3,
             expand=True,
             content=ft.Column(
                 expand=True,
@@ -42,6 +43,7 @@ def main(page: ft.Page) -> None:
                         tabs=[
                             ft.Tab(label="取込"),
                             ft.Tab(label="検索"),
+                            ft.Tab(label="履歴"),
                         ]
                     ),
                     ft.TabBarView(
@@ -49,6 +51,7 @@ def main(page: ft.Page) -> None:
                         controls=[
                             build_import_view(page, DB_PATH),
                             build_search_view(page, DB_PATH),
+                            build_history_view(page, DB_PATH),
                         ],
                     ),
                 ],
