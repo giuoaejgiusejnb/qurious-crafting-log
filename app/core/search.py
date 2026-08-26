@@ -1,18 +1,26 @@
 import sqlite3
 from dataclasses import dataclass, field
 
-from app.core.skill_mask import compute_mask
+MIN_THRESHOLD = 1
+MAX_THRESHOLD = 4
 
 
 @dataclass
 class SearchParams:
     allowed_skill_ids: list[int] = field(default_factory=list)
+    threshold: int = 1
     date_from: str | None = None
     date_to: str | None = None
     batch_id: int | None = None
     label: str | None = None
     min_total_cost: int | None = None
     limit: int = 200
+
+    def __post_init__(self) -> None:
+        if not (MIN_THRESHOLD <= self.threshold <= MAX_THRESHOLD):
+            raise ValueError(
+                f"threshold must be between {MIN_THRESHOLD} and {MAX_THRESHOLD}, got {self.threshold}"
+            )
 
 
 @dataclass
@@ -37,43 +45,54 @@ _SELECT_COLUMNS = (
 
 
 def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[SearchResultRow]:
-    """許可スキル集合に含まれるプラススキルのみで構成され、
-    合計値が2以上のresultsを検索する（最大 params.limit 件）。
+    """許可スキル集合のうち、resultが持つ値の合計（＋2は同じスキル2個分として加算）が
+    params.threshold以上のresultsを検索する（最大 params.limit 件）。
 
-    `(skill_mask & ~allowed_mask) = 0` は「resultの持つスキルが全て許可集合に含まれる」ことを表す。
-    JOIN不要・整数演算のみのため、件数が多くても全件走査で現実的な時間に収まる想定（詳細はscripts/benchmark_search.py）。
+    許可集合に含まれないスキルを併せ持っていても除外しない（除外はしきい値のみで判定する）。
+
+    result_skills.skill_id にインデックスを張っているため、許可スキル数が少数
+    （〜10種類程度）であれば、全件走査ではなくインデックス経由の絞り込みになり高速。
     """
-    allowed_lo, allowed_hi = compute_mask(params.allowed_skill_ids)
+    if not params.allowed_skill_ids:
+        return []
+
+    placeholders = ",".join("?" * len(params.allowed_skill_ids))
+    query_args: list[object] = list(params.allowed_skill_ids)
 
     query = f"""
-        SELECT {_SELECT_COLUMNS}
-        FROM results
-        WHERE (skill_mask_lo & ~:allowed_lo) = 0
-          AND (skill_mask_hi & ~:allowed_hi) = 0
-          AND skill_sum >= 2
+        SELECT {", ".join(f"r.{c.strip()}" for c in _SELECT_COLUMNS.split(","))}
+        FROM (
+            SELECT result_id
+            FROM result_skills
+            WHERE skill_id IN ({placeholders})
+            GROUP BY result_id
+            HAVING SUM(value) >= ?
+        ) matched
+        JOIN results r ON r.id = matched.result_id
+        WHERE 1 = 1
     """
-    query_params: dict[str, object] = {"allowed_lo": allowed_lo, "allowed_hi": allowed_hi}
+    query_args.append(params.threshold)
 
     if params.date_from is not None:
-        query += " AND imported_at >= :date_from"
-        query_params["date_from"] = params.date_from
+        query += " AND r.imported_at >= ?"
+        query_args.append(params.date_from)
     if params.date_to is not None:
-        query += " AND imported_at <= :date_to"
-        query_params["date_to"] = params.date_to
+        query += " AND r.imported_at <= ?"
+        query_args.append(params.date_to)
     if params.batch_id is not None:
-        query += " AND batch_id = :batch_id"
-        query_params["batch_id"] = params.batch_id
+        query += " AND r.batch_id = ?"
+        query_args.append(params.batch_id)
     if params.label is not None:
-        query += " AND label = :label"
-        query_params["label"] = params.label
+        query += " AND r.label = ?"
+        query_args.append(params.label)
     if params.min_total_cost is not None:
-        query += " AND total_cost >= :min_total_cost"
-        query_params["min_total_cost"] = params.min_total_cost
+        query += " AND r.total_cost >= ?"
+        query_args.append(params.min_total_cost)
 
-    query += " LIMIT :limit"
-    query_params["limit"] = params.limit
+    query += " LIMIT ?"
+    query_args.append(params.limit)
 
-    rows = conn.execute(query, query_params).fetchall()
+    rows = conn.execute(query, query_args).fetchall()
     return [SearchResultRow(*row) for row in rows]
 
 

@@ -4,7 +4,6 @@ import pytest
 
 from app.core.importer import import_block
 from app.core.search import SearchParams, fetch_distinct_labels, fetch_skill_breakdown, search_results
-from app.core.skill_mask import matches_allowed_set
 from app.core.skill_registry import SkillRegistry
 from app.db.connection import get_connection
 
@@ -16,35 +15,85 @@ def conn(tmp_path):
     connection.close()
 
 
-SAMPLE_TEXT = "\n".join(
-    [
-        "1,1,1,1,0,0,攻撃+1,見切り+1",  # 対象: 許可集合内、合計2
-        "2,1,1,1,0,0,攻撃+2",  # 対象: 単一スキルで合計2
-        "3,1,1,1,0,0,攻撃+1",  # 対象外: 合計1
-        "4,1,1,1,0,0,攻撃+1,爆破+1",  # 対象外: 許可集合外のスキルを含む
-        "5,1,1,1,0,0",  # 対象外: スキルなし
-    ]
-)
-
-
-def _allowed_ids(conn):
+def _allowed_ids(conn, names=("攻撃", "見切り", "弱点特効")):
     registry = SkillRegistry(conn)
-    return registry.get_ids(["攻撃", "見切り", "弱点特効"])
+    return registry.get_ids(list(names))
 
 
-def test_search_matches_examples_from_requirements(conn):
-    import_block(conn, SAMPLE_TEXT)
-    params = SearchParams(allowed_skill_ids=_allowed_ids(conn))
+def test_search_includes_result_reaching_threshold_via_two_different_skills(conn):
+    import_block(conn, "1,1,1,1,0,0,攻撃+1,見切り+1")
 
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2)
     rows = search_results(conn, params)
 
-    assert sorted(r.zeny_count for r in rows) == [1, 2]
+    assert [r.zeny_count for r in rows] == [1]
+
+
+def test_search_includes_result_reaching_threshold_via_single_skill_level(conn):
+    # 「攻撃+2」は「攻撃+1が2個」と同じ扱いなので、しきい値2を満たす
+    import_block(conn, "1,1,1,1,0,0,攻撃+2")
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2)
+    rows = search_results(conn, params)
+
+    assert [r.zeny_count for r in rows] == [1]
+
+
+def test_search_excludes_result_below_threshold(conn):
+    import_block(conn, "1,1,1,1,0,0,攻撃+1")
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2)
+    rows = search_results(conn, params)
+
+    assert rows == []
+
+
+def test_search_does_not_exclude_result_with_skill_outside_allowed_set(conn):
+    # 現仕様: 許可集合外のスキル（爆破）を含んでいても、許可集合内の合計がしきい値を
+    # 満たしていれば除外しない（旧仕様の「集合外を含むと除外」ルールは廃止）
+    import_block(conn, "1,1,1,1,0,0,攻撃+1,見切り+1,爆破+1")
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2)
+    rows = search_results(conn, params)
+
+    assert [r.zeny_count for r in rows] == [1]
+
+
+def test_search_threshold_controls_how_many_matches_are_required(conn):
+    text = "\n".join(
+        [
+            "1,1,1,1,0,0,攻撃+2,見切り+2",  # 許可集合内合計4
+            "2,1,1,1,0,0,攻撃+2,見切り+1",  # 許可集合内合計3
+            "3,1,1,1,0,0,攻撃+1,見切り+1",  # 許可集合内合計2
+        ]
+    )
+    import_block(conn, text)
+    allowed = _allowed_ids(conn)
+
+    assert sorted(r.zeny_count for r in search_results(conn, SearchParams(allowed_skill_ids=allowed, threshold=4))) == [1]
+    assert sorted(r.zeny_count for r in search_results(conn, SearchParams(allowed_skill_ids=allowed, threshold=3))) == [1, 2]
+    assert sorted(r.zeny_count for r in search_results(conn, SearchParams(allowed_skill_ids=allowed, threshold=2))) == [1, 2, 3]
+
+
+@pytest.mark.parametrize("threshold", [0, 5, -1])
+def test_search_params_rejects_threshold_outside_1_to_4(threshold):
+    with pytest.raises(ValueError):
+        SearchParams(allowed_skill_ids=[0], threshold=threshold)
+
+
+def test_search_returns_empty_when_no_skill_selected(conn):
+    import_block(conn, "1,1,1,1,0,0,攻撃+2")
+
+    params = SearchParams(allowed_skill_ids=[], threshold=1)
+    rows = search_results(conn, params)
+
+    assert rows == []
 
 
 def test_search_respects_limit(conn):
     text = "\n".join(f"{i},1,1,1,0,0,攻撃+2" for i in range(10))
     import_block(conn, text)
-    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), limit=3)
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, limit=3)
 
     rows = search_results(conn, params)
 
@@ -55,7 +104,7 @@ def test_search_filters_by_batch_id(conn):
     summary1 = import_block(conn, "1,1,1,1,0,0,攻撃+2")
     summary2 = import_block(conn, "2,1,1,1,0,0,攻撃+2")
 
-    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), batch_id=summary2.batch_id)
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, batch_id=summary2.batch_id)
     rows = search_results(conn, params)
 
     assert [r.batch_id for r in rows] == [summary2.batch_id]
@@ -71,7 +120,7 @@ def test_search_filters_by_min_total_cost(conn):
     )
     import_block(conn, text)
 
-    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), min_total_cost=500)
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, min_total_cost=500)
     rows = search_results(conn, params)
 
     assert [r.total_cost for r in rows] == [900]
@@ -91,16 +140,31 @@ def test_search_filters_by_date_range(conn):
     )
     conn.commit()
 
-    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), date_from="2026-03-01T00:00:00")
+    params = SearchParams(
+        allowed_skill_ids=_allowed_ids(conn), threshold=2, date_from="2026-03-01T00:00:00"
+    )
     rows = search_results(conn, params)
 
     assert [r.zeny_count for r in rows] == [2]
+
+
+def test_search_filters_by_label(conn):
+    import_block(conn, "1,1,1,1,0,0,攻撃+2", label="ギルパレ脚")
+    import_block(conn, "2,1,1,1,0,0,攻撃+2", label="クシャ胴")
+    import_block(conn, "3,1,1,1,0,0,攻撃+2")  # ラベルなし
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, label="ギルパレ脚")
+    rows = search_results(conn, params)
+
+    assert [r.zeny_count for r in rows] == [1]
+    assert rows[0].label == "ギルパレ脚"
 
 
 def test_search_matches_reference_logic_on_random_data(conn):
     rng = random.Random(1)
     skill_pool = ["攻撃", "見切り", "弱点特効", "業物", "超会心", "痛撃", "回避性能", "納刀術"]
     allowed_names = skill_pool[:3]
+    threshold = 2
 
     lines = []
     for i in range(300):
@@ -112,29 +176,30 @@ def test_search_matches_reference_logic_on_random_data(conn):
     import_block(conn, "\n".join(lines))
 
     registry = SkillRegistry(conn)
-    allowed_ids = registry.get_ids(allowed_names)
-    params = SearchParams(allowed_skill_ids=allowed_ids, limit=10_000)
-    rows = search_results(conn, params)
-    matched_ids = {r.id for r in rows}
+    allowed_ids = set(registry.get_ids(allowed_names))
+    params = SearchParams(allowed_skill_ids=list(allowed_ids), threshold=threshold, limit=10_000)
+    matched_ids = {r.id for r in search_results(conn, params)}
 
-    all_rows = conn.execute(
-        "SELECT id, skill_mask_lo, skill_mask_hi, skill_sum FROM results"
-    ).fetchall()
-    from app.core.skill_mask import compute_mask
-
-    allowed_lo, allowed_hi = compute_mask(allowed_ids)
-    expected_ids = {
-        rid
-        for rid, lo, hi, s in all_rows
-        if matches_allowed_set(lo, hi, s, allowed_lo, allowed_hi)
-    }
+    skill_rows = conn.execute("SELECT result_id, skill_id, value FROM result_skills").fetchall()
+    matched_sum_by_result: dict[int, int] = {}
+    for result_id, skill_id, value in skill_rows:
+        if skill_id in allowed_ids:
+            matched_sum_by_result[result_id] = matched_sum_by_result.get(result_id, 0) + value
+    expected_ids = {rid for rid, total in matched_sum_by_result.items() if total >= threshold}
 
     assert matched_ids == expected_ids
     assert len(expected_ids) > 0  # テストが無意味にならないよう最低限ヒットがあることを確認
 
 
 def test_fetch_skill_breakdown_groups_by_result_id(conn):
-    import_block(conn, SAMPLE_TEXT)
+    text = "\n".join(
+        [
+            "1,1,1,1,0,0,攻撃+1,見切り+1",
+            "2,1,1,1,0,0,攻撃+2",
+            "3,1,1,1,0,0",
+        ]
+    )
+    import_block(conn, text)
     rows = conn.execute("SELECT id FROM results ORDER BY id").fetchall()
     result_ids = [r[0] for r in rows]
 
@@ -142,23 +207,11 @@ def test_fetch_skill_breakdown_groups_by_result_id(conn):
 
     assert breakdown[result_ids[0]] == [("攻撃", 1), ("見切り", 1)]
     assert breakdown[result_ids[1]] == [("攻撃", 2)]
-    assert result_ids[4] not in breakdown  # スキルなしの行は内訳に含まれない
+    assert result_ids[2] not in breakdown  # スキルなしの行は内訳に含まれない
 
 
 def test_fetch_skill_breakdown_empty_list_returns_empty_dict(conn):
     assert fetch_skill_breakdown(conn, []) == {}
-
-
-def test_search_filters_by_label(conn):
-    import_block(conn, "1,1,1,1,0,0,攻撃+2", label="ギルパレ脚")
-    import_block(conn, "2,1,1,1,0,0,攻撃+2", label="クシャ胴")
-    import_block(conn, "3,1,1,1,0,0,攻撃+2")  # ラベルなし
-
-    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), label="ギルパレ脚")
-    rows = search_results(conn, params)
-
-    assert [r.zeny_count for r in rows] == [1]
-    assert rows[0].label == "ギルパレ脚"
 
 
 def test_fetch_distinct_labels_returns_sorted_unique_labels(conn):
