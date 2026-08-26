@@ -3,7 +3,7 @@ import random
 import pytest
 
 from app.core.importer import import_block
-from app.core.search import SearchParams, search_results
+from app.core.search import SearchParams, fetch_distinct_labels, fetch_skill_breakdown, search_results
 from app.core.skill_mask import matches_allowed_set
 from app.core.skill_registry import SkillRegistry
 from app.db.connection import get_connection
@@ -131,3 +131,40 @@ def test_search_matches_reference_logic_on_random_data(conn):
 
     assert matched_ids == expected_ids
     assert len(expected_ids) > 0  # テストが無意味にならないよう最低限ヒットがあることを確認
+
+
+def test_fetch_skill_breakdown_groups_by_result_id(conn):
+    import_block(conn, SAMPLE_TEXT)
+    rows = conn.execute("SELECT id FROM results ORDER BY id").fetchall()
+    result_ids = [r[0] for r in rows]
+
+    breakdown = fetch_skill_breakdown(conn, result_ids)
+
+    assert breakdown[result_ids[0]] == [("攻撃", 1), ("見切り", 1)]
+    assert breakdown[result_ids[1]] == [("攻撃", 2)]
+    assert result_ids[4] not in breakdown  # スキルなしの行は内訳に含まれない
+
+
+def test_fetch_skill_breakdown_empty_list_returns_empty_dict(conn):
+    assert fetch_skill_breakdown(conn, []) == {}
+
+
+def test_search_filters_by_label(conn):
+    import_block(conn, "1,1,1,1,0,0,攻撃+2", label="ギルパレ脚")
+    import_block(conn, "2,1,1,1,0,0,攻撃+2", label="クシャ胴")
+    import_block(conn, "3,1,1,1,0,0,攻撃+2")  # ラベルなし
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), label="ギルパレ脚")
+    rows = search_results(conn, params)
+
+    assert [r.zeny_count for r in rows] == [1]
+    assert rows[0].label == "ギルパレ脚"
+
+
+def test_fetch_distinct_labels_returns_sorted_unique_labels(conn):
+    import_block(conn, "1,1,1,1,0,0,攻撃+2", label="クシャ胴")
+    import_block(conn, "2,1,1,1,0,0,攻撃+2", label="ギルパレ脚")
+    import_block(conn, "3,1,1,1,0,0,攻撃+2", label="クシャ胴")
+    import_block(conn, "4,1,1,1,0,0,攻撃+2")  # ラベルなしは除外される
+
+    assert fetch_distinct_labels(conn) == ["ギルパレ脚", "クシャ胴"]

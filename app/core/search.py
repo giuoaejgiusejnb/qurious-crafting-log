@@ -10,6 +10,7 @@ class SearchParams:
     date_from: str | None = None
     date_to: str | None = None
     batch_id: int | None = None
+    label: str | None = None
     min_total_cost: int | None = None
     limit: int = 200
 
@@ -19,6 +20,7 @@ class SearchResultRow:
     id: int
     batch_id: int
     imported_at: str
+    label: str | None
     zeny_count: int
     zeny: int
     slot_add: int
@@ -29,7 +31,7 @@ class SearchResultRow:
 
 
 _SELECT_COLUMNS = (
-    "id, batch_id, imported_at, zeny_count, zeny, slot_add, total_cost, "
+    "id, batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost, "
     "print_minus, print_resistance, skill_sum"
 )
 
@@ -61,6 +63,9 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
     if params.batch_id is not None:
         query += " AND batch_id = :batch_id"
         query_params["batch_id"] = params.batch_id
+    if params.label is not None:
+        query += " AND label = :label"
+        query_params["label"] = params.label
     if params.min_total_cost is not None:
         query += " AND total_cost >= :min_total_cost"
         query_params["min_total_cost"] = params.min_total_cost
@@ -70,3 +75,36 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
 
     rows = conn.execute(query, query_params).fetchall()
     return [SearchResultRow(*row) for row in rows]
+
+
+def fetch_skill_breakdown(
+    conn: sqlite3.Connection, result_ids: list[int]
+) -> dict[int, list[tuple[str, int]]]:
+    """検索結果一覧の表示用に、result_idごとのスキル内訳（名前・値）を取得する。"""
+    if not result_ids:
+        return {}
+
+    placeholders = ",".join("?" * len(result_ids))
+    rows = conn.execute(
+        f"""
+        SELECT rs.result_id, s.name, rs.value
+        FROM result_skills rs
+        JOIN skills s ON s.id = rs.skill_id
+        WHERE rs.result_id IN ({placeholders})
+        ORDER BY rs.result_id, s.name
+        """,
+        result_ids,
+    ).fetchall()
+
+    breakdown: dict[int, list[tuple[str, int]]] = {}
+    for result_id, name, value in rows:
+        breakdown.setdefault(result_id, []).append((name, value))
+    return breakdown
+
+
+def fetch_distinct_labels(conn: sqlite3.Connection) -> list[str]:
+    """検索UIの防具フィルタ用に、これまで取込に使われたlabel（防具名）の一覧を取得する。"""
+    rows = conn.execute(
+        "SELECT DISTINCT label FROM results WHERE label IS NOT NULL ORDER BY label"
+    ).fetchall()
+    return [r[0] for r in rows]

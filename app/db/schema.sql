@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS results (
     id                 INTEGER PRIMARY KEY,
     batch_id           INTEGER NOT NULL REFERENCES import_batches(id),
     imported_at        TEXT NOT NULL,
+    label              TEXT,   -- 取込バッチのlabelを非正規化（防具での検索用）
     zeny_count         INTEGER,
     zeny               INTEGER,
     slot_add           INTEGER,
@@ -35,3 +36,11 @@ CREATE TABLE IF NOT EXISTS result_skills (
 CREATE INDEX IF NOT EXISTS idx_results_batch_id    ON results(batch_id);
 CREATE INDEX IF NOT EXISTS idx_results_imported_at ON results(imported_at);
 CREATE INDEX IF NOT EXISTS idx_results_total_cost  ON results(total_cost);
+-- idx_results_label は connection.py の _migrate() 側で作成する
+-- （新規DBのCREATE TABLEには既にlabel列が含まれるが、既存DBでは列追加が
+--   このスクリプトの後に行われるため、ここで参照すると失敗する）
+
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);

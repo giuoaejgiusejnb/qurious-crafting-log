@@ -48,13 +48,14 @@ def import_block(
         cur = conn.execute(
             """
             INSERT INTO results (
-                batch_id, imported_at, zeny_count, zeny, slot_add, total_cost,
+                batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost,
                 print_minus, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch_id,
                 imported_at,
+                label,
                 result.zeny_count,
                 result.zeny,
                 result.slot_add,

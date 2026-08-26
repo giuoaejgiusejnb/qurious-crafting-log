@@ -35,6 +35,16 @@ def test_import_block_creates_batch(conn):
     assert batch_row == ("テスト取込", 3)
 
 
+def test_import_block_copies_label_onto_each_result(conn):
+    summary = import_block(conn, SAMPLE_TEXT, label="ギルパレ脚")
+
+    labels = conn.execute(
+        "SELECT label FROM results WHERE batch_id = ?", (summary.batch_id,)
+    ).fetchall()
+    assert all(row == ("ギルパレ脚",) for row in labels)
+    assert len(labels) == 3
+
+
 def test_import_block_computes_correct_mask_and_sum(conn):
     summary = import_block(conn, SAMPLE_TEXT)
 
