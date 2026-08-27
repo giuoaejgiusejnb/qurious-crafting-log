@@ -24,7 +24,7 @@ class BatchResultRow:
     zeny: int
     slot_add: int
     total_cost: int
-    print_minus: int
+    has_deficiency: int
     print_resistance: int
     skill_sum: int
 
@@ -34,7 +34,7 @@ def fetch_batch_results(
 ) -> list[BatchResultRow]:
     rows = conn.execute(
         """
-        SELECT id, zeny_count, zeny, slot_add, total_cost, print_minus, print_resistance, skill_sum
+        SELECT id, zeny_count, zeny, slot_add, total_cost, has_deficiency, print_resistance, skill_sum
         FROM results
         WHERE batch_id = ?
         ORDER BY id

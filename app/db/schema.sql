@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS results (
     zeny               INTEGER,
     slot_add           INTEGER,
     total_cost         INTEGER,
-    print_minus        INTEGER,
+    has_deficiency     INTEGER,   -- スキル欠け（マイナス値のスキルを含む）の有無。0=無, 1=有
     print_resistance   INTEGER,
     skill_mask_lo      INTEGER NOT NULL DEFAULT 0,
     skill_mask_hi      INTEGER NOT NULL DEFAULT 0,

@@ -3,6 +3,7 @@ import pytest
 from app.core.history import fetch_batch_results, list_batches
 from app.core.importer import import_block
 from app.db.connection import get_connection
+from tests.helpers import build_row
 
 
 @pytest.fixture
@@ -13,8 +14,8 @@ def conn(tmp_path):
 
 
 def test_list_batches_returns_newest_first(conn):
-    summary1 = import_block(conn, "1,1,1,1,0,0,攻撃+1", label="ギルパレ脚")
-    summary2 = import_block(conn, "2,1,1,1,0,0,攻撃+1", label="クシャ胴")
+    summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 1)]), label="ギルパレ脚")
+    summary2 = import_block(conn, build_row(zeny_count=2, skills=[("攻撃", 1)]), label="クシャ胴")
 
     batches = list_batches(conn)
 
@@ -28,8 +29,14 @@ def test_list_batches_returns_empty_list_when_no_batches(conn):
 
 
 def test_fetch_batch_results_filters_by_batch_id(conn):
-    summary1 = import_block(conn, "1,1,1,1,0,0,攻撃+1")
-    summary2 = import_block(conn, "2,1,1,1,0,0,攻撃+1\n3,1,1,1,0,0,攻撃+1")
+    summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 1)]))
+    text = "\n".join(
+        [
+            build_row(zeny_count=2, skills=[("攻撃", 1)]),
+            build_row(zeny_count=3, skills=[("攻撃", 1)]),
+        ]
+    )
+    summary2 = import_block(conn, text)
 
     rows = fetch_batch_results(conn, summary2.batch_id)
 
@@ -38,7 +45,7 @@ def test_fetch_batch_results_filters_by_batch_id(conn):
 
 
 def test_fetch_batch_results_supports_pagination(conn):
-    text = "\n".join(f"{i},1,1,1,0,0,攻撃+1" for i in range(1, 11))
+    text = "\n".join(build_row(zeny_count=i, skills=[("攻撃", 1)]) for i in range(1, 11))
     summary = import_block(conn, text)
 
     page1 = fetch_batch_results(conn, summary.batch_id, limit=4, offset=0)

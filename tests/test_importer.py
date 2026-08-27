@@ -3,6 +3,7 @@ import pytest
 from app.core.importer import import_block
 from app.core.skill_mask import compute_mask
 from app.db.connection import get_connection
+from tests.helpers import build_row
 
 
 @pytest.fixture
@@ -14,10 +15,10 @@ def conn(tmp_path):
 
 SAMPLE_TEXT = "\n".join(
     [
-        "5,120,1,500,0,0,攻撃+1,見切り+1",
-        "5,120,1,500,0,0,攻撃+2",
+        build_row(zeny_count=5, skills=[("攻撃", 1), ("見切り", 1)]),
+        build_row(zeny_count=5, skills=[("攻撃", 2)]),
         "invalid,line",
-        "5,120,1,500,0,0",
+        build_row(zeny_count=5),
     ]
 )
 
@@ -84,8 +85,8 @@ def test_import_block_populates_result_skills(conn):
 
 
 def test_import_block_reuses_skill_ids_across_calls(conn):
-    import_block(conn, "5,120,1,500,0,0,攻撃+1")
-    import_block(conn, "5,120,1,500,0,0,攻撃+1,見切り+1")
+    import_block(conn, build_row(skills=[("攻撃", 1)]))
+    import_block(conn, build_row(skills=[("攻撃", 1), ("見切り", 1)]))
 
     skill_ids = {
         name: skill_id
@@ -98,3 +99,14 @@ def test_import_block_reports_progress(conn):
     calls = []
     import_block(conn, SAMPLE_TEXT, progress_callback=lambda done, total: calls.append((done, total)))
     assert calls[-1] == (3, 3)
+
+
+def test_import_block_stores_deficiency_and_resistance(conn):
+    line = build_row(deficiency="有", resistance=-5, skills=[("火事場力", -1)])
+    summary = import_block(conn, line)
+
+    row = conn.execute(
+        "SELECT has_deficiency, print_resistance FROM results WHERE batch_id = ?",
+        (summary.batch_id,),
+    ).fetchone()
+    assert row == (1, -5)

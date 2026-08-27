@@ -49,7 +49,7 @@ def import_block(
             """
             INSERT INTO results (
                 batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost,
-                print_minus, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum
+                has_deficiency, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -60,7 +60,7 @@ def import_block(
                 result.zeny,
                 result.slot_add,
                 result.total_cost,
-                result.print_minus,
+                result.has_deficiency,
                 result.print_resistance,
                 mask_lo,
                 mask_hi,

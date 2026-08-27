@@ -52,7 +52,7 @@ def generate_dummy_data(
     insert_sql = """
         INSERT INTO results (
             batch_id, imported_at, zeny_count, zeny, slot_add, total_cost,
-            print_minus, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum
+            has_deficiency, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """
 

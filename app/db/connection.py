@@ -14,7 +14,16 @@ def _migrate(conn: sqlite3.Connection) -> None:
     existing_columns = {row[1] for row in conn.execute("PRAGMA table_info(results)").fetchall()}
     if "label" not in existing_columns:
         conn.execute("ALTER TABLE results ADD COLUMN label TEXT")
+        existing_columns.add("label")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_results_label ON results(label)")
+
+    # print_minus は「スキル欠け」概念に合わせて has_deficiency へ改名した
+    if "has_deficiency" not in existing_columns:
+        if "print_minus" in existing_columns:
+            conn.execute("ALTER TABLE results RENAME COLUMN print_minus TO has_deficiency")
+        else:
+            conn.execute("ALTER TABLE results ADD COLUMN has_deficiency INTEGER")
+
     conn.commit()
 
 

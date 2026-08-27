@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Callable
 
 import flet as ft
 
@@ -44,7 +45,8 @@ def _load_batch_options(db_path: Path) -> list[tuple[int, str]]:
         conn.close()
 
 
-def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
+def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callable[[], None]]:
+    """検索画面を構築する。戻り値は (画面コントロール, バッチ/防具選択肢を最新化する関数)。"""
     skill_checkboxes: dict[str, ft.Checkbox] = {}
     selected_summary_container = ft.Container()
     current_skill_set_name: str | None = None
@@ -376,27 +378,46 @@ def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
 
     update_selected_summary()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
-    batch_options = _load_batch_options(db_path)
     batch_dropdown = ft.Dropdown(
         label="対象バッチ（未選択なら全体）",
         width=420,
         value=_UNSELECTED,
-        options=[
-            ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
-            *[ft.DropdownOption(key=str(bid), text=text) for bid, text in batch_options],
-        ],
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
 
-    label_options = _load_label_options(db_path)
     label_dropdown = ft.Dropdown(
         label="防具（未選択なら全体）",
         width=220,
         value=_UNSELECTED,
-        options=[
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    )
+
+    def _load_filter_data() -> None:
+        batch_options = _load_batch_options(db_path)
+        batch_dropdown.options = [
+            ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+            *[ft.DropdownOption(key=str(bid), text=text) for bid, text in batch_options],
+        ]
+        if batch_dropdown.value not in {opt.key for opt in batch_dropdown.options}:
+            batch_dropdown.value = _UNSELECTED
+
+        label_options = _load_label_options(db_path)
+        label_dropdown.options = [
             ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
             *[ft.DropdownOption(key=name, text=name) for name in label_options],
-        ],
-    )
+        ]
+        if label_dropdown.value not in {opt.key for opt in label_dropdown.options}:
+            label_dropdown.value = _UNSELECTED
+
+    def refresh_filter_options() -> None:
+        """取込タブでの取込完了時に外部から呼ばれ、バッチ/防具の選択肢を最新化する。
+
+        ページ接続後にのみ呼ばれる想定（page.update()を呼ぶため）。
+        """
+        _load_filter_data()
+        page.update()
+
+    _load_filter_data()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
     threshold_dropdown = ft.Dropdown(
         label="必要な個数（1〜4）",
@@ -434,6 +455,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
                 ft.Text("防具", width=120, weight=ft.FontWeight.BOLD),
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("合計値", width=60, weight=ft.FontWeight.BOLD),
+                ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("total_cost", width=100, weight=ft.FontWeight.BOLD),
                 ft.Text("バッチ", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
@@ -443,7 +465,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
         results_column.controls.append(ft.Divider(height=1))
 
         for row in rows:
-            skills_text = "、".join(f"{name}+{value}" for name, value in breakdown.get(row.id, []))
+            skills_text = "、".join(f"{name}{value:+d}" for name, value in breakdown.get(row.id, []))
             results_column.controls.append(
                 ft.Row(
                     [
@@ -451,6 +473,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
                         ft.Text(row.label or "", width=120),
                         ft.Text(skills_text, width=240),
                         ft.Text(str(row.skill_sum), width=60),
+                        ft.Text("有" if row.has_deficiency else "無", width=80),
                         ft.Text(str(row.total_cost), width=100),
                         ft.Text(str(row.batch_id), width=60),
                         ft.Text(row.imported_at, width=160),
@@ -460,11 +483,8 @@ def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
         page.update()
 
     def run_search() -> None:
+        # スキル未選択でもよい（他の条件のみで検索する）
         selected_names = [name for name, checkbox in skill_checkboxes.items() if checkbox.value]
-        if not selected_names:
-            status_text.value = "許可するスキルを1つ以上選択してください"
-            page.update()
-            return
 
         min_total_cost: int | None = None
         if min_cost_field.value:
@@ -515,7 +535,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
 
     search_button.on_click = on_click
 
-    return ft.Column(
+    view = ft.Column(
         [
             ft.Text("錬成結果の検索", size=20, weight=ft.FontWeight.BOLD),
             ft.Text(
@@ -542,3 +562,4 @@ def build_search_view(page: ft.Page, db_path: Path) -> ft.Control:
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )
+    return view, refresh_filter_options

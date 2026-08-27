@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Callable
 
 import flet as ft
 
@@ -15,7 +16,12 @@ _CUSTOM_COLOR = ft.Colors.AMBER_100
 _OPTIONS_PER_ROW = 4
 
 
-def build_import_view(page: ft.Page, db_path: Path) -> ft.Control:
+def build_import_view(
+    page: ft.Page,
+    db_path: Path,
+    on_imported: Callable[[], None] | None = None,
+) -> ft.Control:
+    """取込画面を構築する。on_importedは取込成功時に呼ばれ、他タブの一覧更新に使う。"""
     log_field = ft.TextField(
         label="result_log（複数行貼り付け可）",
         multiline=True,
@@ -204,6 +210,9 @@ def build_import_view(page: ft.Page, db_path: Path) -> ft.Control:
 
         log_field.value = ""
         set_busy(False)
+
+        if summary.imported_count > 0 and on_imported is not None:
+            on_imported()  # 検索/履歴タブのバッチ一覧を最新化する
 
     def on_click(e: ft.Event[ft.Button]) -> None:
         page.run_thread(run_import)

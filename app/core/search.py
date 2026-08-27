@@ -33,45 +33,53 @@ class SearchResultRow:
     zeny: int
     slot_add: int
     total_cost: int
-    print_minus: int
+    has_deficiency: int
     print_resistance: int
     skill_sum: int
 
 
 _SELECT_COLUMNS = (
     "id, batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost, "
-    "print_minus, print_resistance, skill_sum"
+    "has_deficiency, print_resistance, skill_sum"
 )
 
 
 def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[SearchResultRow]:
-    """許可スキル集合のうち、resultが持つ値の合計（＋2は同じスキル2個分として加算）が
-    params.threshold以上のresultsを検索する（最大 params.limit 件）。
+    """resultsを検索する（最大 params.limit 件、取込日時の新しい順）。
 
-    許可集合に含まれないスキルを併せ持っていても除外しない（除外はしきい値のみで判定する）。
-
+    許可スキル集合を指定した場合: そのうちresultが持つ値の合計（＋2は同じスキル2個分として
+    加算）がparams.threshold以上のもののみを対象とする。許可集合に含まれないスキルを
+    併せ持っていても除外しない（除外はしきい値のみで判定する）。
     result_skills.skill_id にインデックスを張っているため、許可スキル数が少数
     （〜10種類程度）であれば、全件走査ではなくインデックス経由の絞り込みになり高速。
-    """
-    if not params.allowed_skill_ids:
-        return []
 
-    placeholders = ",".join("?" * len(params.allowed_skill_ids))
-    query_args: list[object] = list(params.allowed_skill_ids)
-
-    query = f"""
-        SELECT {", ".join(f"r.{c.strip()}" for c in _SELECT_COLUMNS.split(","))}
-        FROM (
-            SELECT result_id
-            FROM result_skills
-            WHERE skill_id IN ({placeholders})
-            GROUP BY result_id
-            HAVING SUM(value) >= ?
-        ) matched
-        JOIN results r ON r.id = matched.result_id
-        WHERE 1 = 1
+    許可スキル集合を指定しない場合: スキル条件なしで、他の絞り込み条件のみでresultsを検索する。
     """
-    query_args.append(params.threshold)
+    select_columns = ", ".join(f"r.{c.strip()}" for c in _SELECT_COLUMNS.split(","))
+    query_args: list[object] = []
+
+    if params.allowed_skill_ids:
+        placeholders = ",".join("?" * len(params.allowed_skill_ids))
+        query_args.extend(params.allowed_skill_ids)
+        query = f"""
+            SELECT {select_columns}
+            FROM (
+                SELECT result_id
+                FROM result_skills
+                WHERE skill_id IN ({placeholders})
+                GROUP BY result_id
+                HAVING SUM(value) >= ?
+            ) matched
+            JOIN results r ON r.id = matched.result_id
+            WHERE 1 = 1
+        """
+        query_args.append(params.threshold)
+    else:
+        query = f"""
+            SELECT {select_columns}
+            FROM results r
+            WHERE 1 = 1
+        """
 
     if params.date_from is not None:
         query += " AND r.imported_at >= ?"
@@ -89,7 +97,7 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
         query += " AND r.total_cost >= ?"
         query_args.append(params.min_total_cost)
 
-    query += " LIMIT ?"
+    query += " ORDER BY r.id DESC LIMIT ?"
     query_args.append(params.limit)
 
     rows = conn.execute(query, query_args).fetchall()

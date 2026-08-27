@@ -32,6 +32,17 @@ def main(page: ft.Page) -> None:
         )
     )
 
+    # 検索・履歴タブを先に構築し、それぞれの「一覧を最新化する」関数を取得しておく。
+    # 取込タブ側は取込成功時にこれらを呼び出すことで、再起動なしに反映されるようにする。
+    search_view, refresh_search_filters = build_search_view(page, DB_PATH)
+    history_view, refresh_history_batches = build_history_view(page, DB_PATH)
+
+    def on_imported() -> None:
+        refresh_search_filters()
+        refresh_history_batches()
+
+    import_view = build_import_view(page, DB_PATH, on_imported=on_imported)
+
     page.add(
         ft.Tabs(
             length=3,
@@ -49,9 +60,9 @@ def main(page: ft.Page) -> None:
                     ft.TabBarView(
                         expand=True,
                         controls=[
-                            build_import_view(page, DB_PATH),
-                            build_search_view(page, DB_PATH),
-                            build_history_view(page, DB_PATH),
+                            import_view,
+                            search_view,
+                            history_view,
                         ],
                     ),
                 ],

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Callable
 
 import flet as ft
 
@@ -9,7 +10,8 @@ from app.db.connection import get_connection
 _PAGE_SIZE = 200
 
 
-def build_history_view(page: ft.Page, db_path: Path) -> ft.Control:
+def build_history_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callable[[], None]]:
+    """履歴画面を構築する。戻り値は (画面コントロール, バッチ一覧を最新化する関数)。"""
     batch_list_column = ft.Column(spacing=2)
     results_column = ft.Column(spacing=2)
     detail_status_text = ft.Text()
@@ -43,6 +45,7 @@ def build_history_view(page: ft.Page, db_path: Path) -> ft.Control:
                     ft.Text("ID", width=60, weight=ft.FontWeight.BOLD),
                     ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                     ft.Text("合計値", width=60, weight=ft.FontWeight.BOLD),
+                    ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
                     ft.Text("total_cost", width=100, weight=ft.FontWeight.BOLD),
                     ft.Text("zeny", width=80, weight=ft.FontWeight.BOLD),
                 ]
@@ -50,13 +53,14 @@ def build_history_view(page: ft.Page, db_path: Path) -> ft.Control:
             results_column.controls.append(header)
             results_column.controls.append(ft.Divider(height=1))
             for row in rows:
-                skills_text = "、".join(f"{name}+{value}" for name, value in breakdown.get(row.id, []))
+                skills_text = "、".join(f"{name}{value:+d}" for name, value in breakdown.get(row.id, []))
                 results_column.controls.append(
                     ft.Row(
                         [
                             ft.Text(str(row.id), width=60),
                             ft.Text(skills_text, width=240),
                             ft.Text(str(row.skill_sum), width=60),
+                            ft.Text("有" if row.has_deficiency else "無", width=80),
                             ft.Text(str(row.total_cost), width=100),
                             ft.Text(str(row.zeny), width=80),
                         ]
@@ -133,20 +137,19 @@ def build_history_view(page: ft.Page, db_path: Path) -> ft.Control:
                 )
             )
 
-    def refresh_batches(e: ft.Event[ft.Button] | None = None) -> None:
+    def refresh_batches() -> None:
+        """バッチ一覧を最新化する。取込タブでの取込完了時に外部から呼ばれる（自動更新）。
+
+        ページ接続後にのみ呼ばれる想定（page.update()を呼ぶため）。
+        """
         load_batches()
-        if e is not None:
-            page.update()
+        page.update()
 
-    refresh_button = ft.Button(content="履歴を更新")
-    refresh_button.on_click = refresh_batches
+    load_batches()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
-    refresh_batches()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
-
-    return ft.Column(
+    view = ft.Column(
         [
             ft.Text("取込履歴", size=20, weight=ft.FontWeight.BOLD),
-            ft.Row([refresh_button]),
             ft.Container(content=batch_list_column, padding=ft.Padding.symmetric(vertical=8)),
             ft.Divider(),
             ft.Text("バッチの内容", size=16, weight=ft.FontWeight.BOLD),
@@ -157,3 +160,4 @@ def build_history_view(page: ft.Page, db_path: Path) -> ft.Control:
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )
+    return view, refresh_batches
