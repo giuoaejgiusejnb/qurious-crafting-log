@@ -499,20 +499,25 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         results_list.controls.append(header)
         results_list.controls.append(ft.Divider(height=1))
 
-        for row in rows:
+        for index, row in enumerate(rows):
             skills_text = "、".join(f"{name}{value:+d}" for name, value in breakdown.get(row.id, []))
             results_list.controls.append(
-                ft.Row(
-                    [
-                        ft.Text(str(row.zeny_count), width=70),
-                        ft.Text(str(row.total_cost), width=80),
-                        ft.Text(skills_text, width=240),
-                        ft.Text(str(row.slot_add), width=60),
-                        ft.Text(str(row.print_resistance), width=60),
-                        ft.Text("有" if row.has_deficiency else "無", width=80),
-                        ft.Text(str(row.batch_id), width=60),
-                        ft.Text(row.imported_at, width=160),
-                    ]
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Text(str(row.zeny_count), width=70),
+                            ft.Text(str(row.total_cost), width=80),
+                            ft.Text(skills_text, width=240),
+                            ft.Text(str(row.slot_add), width=60),
+                            ft.Text(str(row.print_resistance), width=60),
+                            ft.Text("有" if row.has_deficiency else "無", width=80),
+                            ft.Text(str(row.batch_id), width=60),
+                            ft.Text(row.imported_at, width=160),
+                        ]
+                    ),
+                    # ゼブラストライプ: 1行おきに背景色を変えて行を目で追いやすくする
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST if index % 2 == 1 else None,
+                    padding=ft.Padding.symmetric(vertical=2, horizontal=4),
                 )
             )
         page.update()
@@ -562,7 +567,8 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
     async def scroll_to_anchor() -> None:
         # scroll_to()は非同期APIのため、ワーカースレッド（page.run_thread）からは
         # page.run_task()経由でページのイベントループ上に実行を依頼する。
-        await view.scroll_to(scroll_key=_SCROLL_ANCHOR_KEY, duration=200)
+        # duration=0で即時ジャンプにし、アニメーション分の固定遅延をなくす。
+        await view.scroll_to(scroll_key=_SCROLL_ANCHOR_KEY, duration=0)
 
     def run_search_page(offset: int) -> None:
         nonlocal current_offset, has_next_page
