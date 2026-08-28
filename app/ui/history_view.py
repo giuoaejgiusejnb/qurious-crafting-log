@@ -46,7 +46,7 @@ def build_history_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callab
                     ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                     ft.Text("合計値", width=60, weight=ft.FontWeight.BOLD),
                     ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
-                    ft.Text("total_cost", width=100, weight=ft.FontWeight.BOLD),
+                    ft.Text("コスト", width=100, weight=ft.FontWeight.BOLD),
                     ft.Text("zeny", width=80, weight=ft.FontWeight.BOLD),
                 ]
             )

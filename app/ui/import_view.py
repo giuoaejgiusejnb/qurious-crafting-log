@@ -206,7 +206,7 @@ def build_import_view(
             on_imported()  # 検索/履歴タブのバッチ一覧を最新化する
 
     async def on_clipboard_click(e: ft.Event[ft.Button]) -> None:
-        text = await page.clipboard.get()
+        text = await ft.Clipboard().get()
         if not text or not text.strip():
             status_text.value = "クリップボードに読み取れるデータがありません"
             page.update()

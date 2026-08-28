@@ -432,13 +432,13 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         value="craft_order",
         options=[
             ft.DropdownOption(key="craft_order", text="練成順"),
-            ft.DropdownOption(key="total_cost_desc", text="total_cost（降順）"),
+            ft.DropdownOption(key="total_cost_desc", text="コスト（降順）"),
         ],
     )
 
     date_from_field = ft.TextField(label="取込日時 開始（例: 2026-01-01）", width=220)
     date_to_field = ft.TextField(label="取込日時 終了", width=220)
-    min_cost_field = ft.TextField(label="total_cost 以上（任意）", width=200)
+    min_cost_field = ft.TextField(label="コスト以上（任意）", width=200)
 
     progress_bar = ft.ProgressBar(width=420, value=0, visible=False)
     status_text = ft.Text()
@@ -462,11 +462,11 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         header = ft.Row(
             [
                 ft.Text("練成回数", width=70, weight=ft.FontWeight.BOLD),
-                ft.Text("防具", width=120, weight=ft.FontWeight.BOLD),
+                ft.Text("コスト", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
-                ft.Text("合計値", width=60, weight=ft.FontWeight.BOLD),
+                ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
+                ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
-                ft.Text("total_cost", width=100, weight=ft.FontWeight.BOLD),
                 ft.Text("バッチ", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
             ]
@@ -480,11 +480,11 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                 ft.Row(
                     [
                         ft.Text(str(row.zeny_count), width=70),
-                        ft.Text(row.label or "", width=120),
+                        ft.Text(str(row.total_cost), width=80),
                         ft.Text(skills_text, width=240),
-                        ft.Text(str(row.skill_sum), width=60),
+                        ft.Text(str(row.slot_add), width=60),
+                        ft.Text(str(row.print_resistance), width=60),
                         ft.Text("有" if row.has_deficiency else "無", width=80),
-                        ft.Text(str(row.total_cost), width=100),
                         ft.Text(str(row.batch_id), width=60),
                         ft.Text(row.imported_at, width=160),
                     ]
@@ -501,7 +501,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
             try:
                 min_total_cost = int(min_cost_field.value)
             except ValueError:
-                status_text.value = "total_costは数値で入力してください"
+                status_text.value = "コストは数値で入力してください"
                 page.update()
                 return
 
