@@ -7,3 +7,4 @@ data/
 *.egg-info/
 build/
 dist/
+sample_paste_*.txt

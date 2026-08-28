@@ -22,16 +22,8 @@ def build_import_view(
     on_imported: Callable[[], None] | None = None,
 ) -> ft.Control:
     """取込画面を構築する。on_importedは取込成功時に呼ばれ、他タブの一覧更新に使う。"""
-    log_field = ft.TextField(
-        label="result_log（複数行貼り付け可）",
-        multiline=True,
-        min_lines=10,
-        max_lines=16,
-        expand=True,
-    )
     progress_bar = ft.ProgressBar(width=400, value=0, visible=False)
     status_text = ft.Text()
-    import_button = ft.Button(content="取込")
 
     # --- 練成している防具 選択UI ---
     setting_conn = get_connection(db_path)
@@ -171,7 +163,7 @@ def build_import_view(
     refresh_options_layout()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
     def set_busy(busy: bool) -> None:
-        import_button.disabled = busy
+        clipboard_import_button.disabled = busy
         progress_bar.visible = busy
         page.update()
 
@@ -180,8 +172,8 @@ def build_import_view(
         status_text.value = f"取込中... {done}/{total}"
         page.update()
 
-    def run_import() -> None:
-        text = log_field.value or ""
+    def do_import(text: str) -> None:
+        """result_logのテキストを取り込む実処理。呼び出し元（入力欄／クリップボード）を問わない。"""
         label = label_radio_group.value or None
 
         if not text.strip():
@@ -208,24 +200,28 @@ def build_import_view(
             preview = "、".join(f"{ln}行目: {msg}" for ln, msg in summary.errors[:5])
             status_text.value += f"\nエラー例: {preview}"
 
-        log_field.value = ""
         set_busy(False)
 
         if summary.imported_count > 0 and on_imported is not None:
             on_imported()  # 検索/履歴タブのバッチ一覧を最新化する
 
-    def on_click(e: ft.Event[ft.Button]) -> None:
-        page.run_thread(run_import)
+    async def on_clipboard_click(e: ft.Event[ft.Button]) -> None:
+        text = await page.clipboard.get()
+        if not text or not text.strip():
+            status_text.value = "クリップボードに読み取れるデータがありません"
+            page.update()
+            return
+        page.run_thread(do_import, text)
 
-    import_button.on_click = on_click
+    clipboard_import_button = ft.Button(content="クリップボードから取込")
+    clipboard_import_button.on_click = on_clipboard_click
 
     return ft.Column(
         [
             ft.Text("錬成結果の取込", size=20, weight=ft.FontWeight.BOLD),
-            log_field,
             ft.Text("練成している防具", size=16, weight=ft.FontWeight.BOLD),
             label_radio_group,
-            ft.Row([import_button]),
+            ft.Row([clipboard_import_button]),
             progress_bar,
             status_text,
         ],
