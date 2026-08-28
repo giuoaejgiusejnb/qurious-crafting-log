@@ -103,13 +103,14 @@ def test_search_with_no_skill_selected_still_applies_other_filters(conn):
     assert [r.zeny_count for r in rows] == [2]
 
 
-def test_search_orders_results_newest_first(conn):
+def test_search_default_sort_is_craft_order(conn):
     for i in range(1, 4):
         import_block(conn, build_row(zeny_count=i, skills=[("攻撃", 2)]))
 
     params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2)
     rows = search_results(conn, params)
 
+    # 既定の並びは練成順（新しいバッチから、バッチ内は練成回数昇順）
     assert [r.zeny_count for r in rows] == [3, 2, 1]
 
 
@@ -243,3 +244,60 @@ def test_fetch_distinct_labels_returns_sorted_unique_labels(conn):
     import_block(conn, build_row(zeny_count=4, skills=[("攻撃", 2)]))  # ラベルなしは除外される
 
     assert fetch_distinct_labels(conn) == ["ギルパレ脚", "クシャ胴"]
+
+
+def test_search_params_rejects_unknown_sort():
+    with pytest.raises(ValueError):
+        SearchParams(allowed_skill_ids=[0], sort="unknown")
+
+
+def test_search_sorts_by_total_cost_descending(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=1, total_cost=100, skills=[("攻撃", 2)]),
+            build_row(zeny_count=2, total_cost=900, skills=[("攻撃", 2)]),
+            build_row(zeny_count=3, total_cost=500, skills=[("攻撃", 2)]),
+        ]
+    )
+    import_block(conn, text)
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, sort="total_cost_desc")
+    rows = search_results(conn, params)
+
+    assert [r.total_cost for r in rows] == [900, 500, 100]
+
+
+def test_search_craft_order_sorts_by_zeny_count_ascending_within_a_batch(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=30, skills=[("攻撃", 2)]),
+            build_row(zeny_count=10, skills=[("攻撃", 2)]),
+            build_row(zeny_count=20, skills=[("攻撃", 2)]),
+        ]
+    )
+    import_block(conn, text)
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, sort="craft_order")
+    rows = search_results(conn, params)
+
+    assert [r.zeny_count for r in rows] == [10, 20, 30]
+
+
+def test_search_craft_order_lists_newest_batch_first(conn):
+    # バッチA(古い)→B→C(新しい)の順で取り込んだ場合、
+    # 練成順ではC→B→Aの順に並び、各バッチ内は練成回数の昇順になる
+    import_block(conn, "\n".join(build_row(zeny_count=i, skills=[("攻撃", 2)]) for i in [2, 1]))
+    import_block(conn, "\n".join(build_row(zeny_count=i, skills=[("攻撃", 2)]) for i in [2, 1]))
+    import_block(conn, "\n".join(build_row(zeny_count=i, skills=[("攻撃", 2)]) for i in [2, 1]))
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, sort="craft_order", limit=6)
+    rows = search_results(conn, params)
+
+    assert [(r.batch_id, r.zeny_count) for r in rows] == [
+        (3, 1),
+        (3, 2),
+        (2, 1),
+        (2, 2),
+        (1, 1),
+        (1, 2),
+    ]

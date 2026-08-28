@@ -426,6 +426,16 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
     )
 
+    sort_dropdown = ft.Dropdown(
+        label="並び替え",
+        width=220,
+        value="craft_order",
+        options=[
+            ft.DropdownOption(key="craft_order", text="練成順"),
+            ft.DropdownOption(key="total_cost_desc", text="total_cost（降順）"),
+        ],
+    )
+
     date_from_field = ft.TextField(label="取込日時 開始（例: 2026-01-01）", width=220)
     date_to_field = ft.TextField(label="取込日時 終了", width=220)
     min_cost_field = ft.TextField(label="total_cost 以上（任意）", width=200)
@@ -451,7 +461,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
 
         header = ft.Row(
             [
-                ft.Text("ID", width=60, weight=ft.FontWeight.BOLD),
+                ft.Text("練成回数", width=70, weight=ft.FontWeight.BOLD),
                 ft.Text("防具", width=120, weight=ft.FontWeight.BOLD),
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("合計値", width=60, weight=ft.FontWeight.BOLD),
@@ -469,7 +479,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
             results_column.controls.append(
                 ft.Row(
                     [
-                        ft.Text(str(row.id), width=60),
+                        ft.Text(str(row.zeny_count), width=70),
                         ft.Text(row.label or "", width=120),
                         ft.Text(skills_text, width=240),
                         ft.Text(str(row.skill_sum), width=60),
@@ -506,6 +516,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
             params = SearchParams(
                 allowed_skill_ids=allowed_ids,
                 threshold=int(threshold_dropdown.value or 1),
+                sort=sort_dropdown.value or "craft_order",
                 date_from=(date_from_field.value or None),
                 date_to=(date_to_field.value or None),
                 batch_id=(
@@ -549,6 +560,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                     current_set_detail_button,
                     clear_current_selection_button,
                     threshold_dropdown,
+                    sort_dropdown,
                 ]
             ),
             ft.Row([date_from_field, date_to_field, min_cost_field]),

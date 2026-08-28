@@ -4,6 +4,15 @@ from dataclasses import dataclass, field
 MIN_THRESHOLD = 1
 MAX_THRESHOLD = 4
 
+# 並び替え条件。値はSQLのORDER BY句（方向は固定）。
+# 「練成順」は、取込バッチが新しい順（＝取込が新しいバッチが先）に並べ、
+# 同一バッチ内では練成回数の昇順（1回目→最後）に並べる複合ソート。
+SORT_OPTIONS: dict[str, str] = {
+    "total_cost_desc": "r.total_cost DESC",
+    "craft_order": "r.batch_id DESC, r.zeny_count ASC",
+}
+DEFAULT_SORT = "craft_order"
+
 
 @dataclass
 class SearchParams:
@@ -14,6 +23,7 @@ class SearchParams:
     batch_id: int | None = None
     label: str | None = None
     min_total_cost: int | None = None
+    sort: str = DEFAULT_SORT
     limit: int = 200
 
     def __post_init__(self) -> None:
@@ -21,6 +31,8 @@ class SearchParams:
             raise ValueError(
                 f"threshold must be between {MIN_THRESHOLD} and {MAX_THRESHOLD}, got {self.threshold}"
             )
+        if self.sort not in SORT_OPTIONS:
+            raise ValueError(f"sort must be one of {sorted(SORT_OPTIONS)}, got {self.sort!r}")
 
 
 @dataclass
@@ -45,7 +57,7 @@ _SELECT_COLUMNS = (
 
 
 def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[SearchResultRow]:
-    """resultsを検索する（最大 params.limit 件、取込日時の新しい順）。
+    """resultsを検索する（最大 params.limit 件）。並び順はparams.sort（SORT_OPTIONS参照、既定は新しい順）。
 
     許可スキル集合を指定した場合: そのうちresultが持つ値の合計（＋2は同じスキル2個分として
     加算）がparams.threshold以上のもののみを対象とする。許可集合に含まれないスキルを
@@ -97,7 +109,7 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
         query += " AND r.total_cost >= ?"
         query_args.append(params.min_total_cost)
 
-    query += " ORDER BY r.id DESC LIMIT ?"
+    query += f" ORDER BY {SORT_OPTIONS[params.sort]} LIMIT ?"
     query_args.append(params.limit)
 
     rows = conn.execute(query, query_args).fetchall()
