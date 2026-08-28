@@ -124,6 +124,22 @@ def test_search_respects_limit(conn):
     assert len(rows) == 3
 
 
+def test_search_respects_offset_for_pagination(conn):
+    text = "\n".join(build_row(zeny_count=i, skills=[("攻撃", 2)]) for i in range(1, 11))
+    import_block(conn, text)
+
+    # craft_order（既定）は1バッチ内でzeny_count昇順になるため、ページングの確認に使う
+    page1 = search_results(
+        conn, SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, limit=4, offset=0)
+    )
+    page2 = search_results(
+        conn, SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, limit=4, offset=4)
+    )
+
+    assert [r.zeny_count for r in page1] == [1, 2, 3, 4]
+    assert [r.zeny_count for r in page2] == [5, 6, 7, 8]
+
+
 def test_search_filters_by_batch_id(conn):
     summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 2)]))
     summary2 = import_block(conn, build_row(zeny_count=2, skills=[("攻撃", 2)]))

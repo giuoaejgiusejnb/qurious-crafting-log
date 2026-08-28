@@ -25,6 +25,7 @@ class SearchParams:
     min_total_cost: int | None = None
     sort: str = DEFAULT_SORT
     limit: int = 200
+    offset: int = 0
 
     def __post_init__(self) -> None:
         if not (MIN_THRESHOLD <= self.threshold <= MAX_THRESHOLD):
@@ -109,8 +110,9 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
         query += " AND r.total_cost >= ?"
         query_args.append(params.min_total_cost)
 
-    query += f" ORDER BY {SORT_OPTIONS[params.sort]} LIMIT ?"
+    query += f" ORDER BY {SORT_OPTIONS[params.sort]} LIMIT ? OFFSET ?"
     query_args.append(params.limit)
+    query_args.append(params.offset)
 
     rows = conn.execute(query, query_args).fetchall()
     return [SearchResultRow(*row) for row in rows]

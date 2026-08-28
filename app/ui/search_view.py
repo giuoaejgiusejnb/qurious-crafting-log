@@ -12,6 +12,14 @@ from app.db.connection import get_connection
 _SKILLS_PER_ROW = 5
 _SUMMARY_CHIPS_PER_ROW = 8
 _UNSELECTED = "__unselected__"
+_PAGE_SIZE = 200
+
+# ページ送り後にスクロールで戻る先の目印。今は画面最上部のタイトルに付けているが、
+# 例えば「上部の前へ/次へボタンの位置に戻る」等に変更したい場合は、
+# このkeyを付け替える対象コントロールを変えるだけでよい。
+# 単なる文字列ではなくft.ScrollKeyを使う必要がある
+# （通常のkey（ValueKey相当）はスクロール先指定用としては認識されない）。
+_SCROLL_ANCHOR_KEY = ft.ScrollKey("search_view_scroll_anchor")
 
 
 def _load_skill_names(db_path: Path) -> list[str]:
@@ -442,20 +450,37 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
 
     progress_bar = ft.ProgressBar(width=420, value=0, visible=False)
     status_text = ft.Text()
-    results_column = ft.Column(spacing=2)
+    # ListView（独立スクロール）にすると外側Columnのスクロールと競合し、
+    # 固定高さの中でしかスクロールできず一部の行しか見えなくなるため、
+    # 外側1本のスクロールに統合されるColumnに戻す。
+    # ページあたり最大200件までしか描画しないため、Columnでも表示は軽い。
+    results_list = ft.Column(spacing=2)
 
     search_button = ft.Button(content="検索")
+    prev_button_top = ft.Button(content="前へ", disabled=True)
+    next_button_top = ft.Button(content="次へ", disabled=True)
+    prev_button_bottom = ft.Button(content="前へ", disabled=True)
+    next_button_bottom = ft.Button(content="次へ", disabled=True)
+    prev_buttons = (prev_button_top, prev_button_bottom)
+    next_buttons = (next_button_top, next_button_bottom)
+
+    current_offset = 0
+    has_next_page = False
 
     def set_busy(busy: bool) -> None:
         search_button.disabled = busy
+        for btn in prev_buttons:
+            btn.disabled = busy or current_offset <= 0
+        for btn in next_buttons:
+            btn.disabled = busy or not has_next_page
         progress_bar.visible = busy
         page.update()
 
     def render_results(rows, breakdown: dict[int, list[tuple[str, int]]]) -> None:
-        results_column.controls.clear()
+        results_list.controls.clear()
 
         if not rows:
-            results_column.controls.append(ft.Text("該当する結果はありません"))
+            results_list.controls.append(ft.Text("該当する結果はありません"))
             page.update()
             return
 
@@ -471,12 +496,12 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
             ]
         )
-        results_column.controls.append(header)
-        results_column.controls.append(ft.Divider(height=1))
+        results_list.controls.append(header)
+        results_list.controls.append(ft.Divider(height=1))
 
         for row in rows:
             skills_text = "、".join(f"{name}{value:+d}" for name, value in breakdown.get(row.id, []))
-            results_column.controls.append(
+            results_list.controls.append(
                 ft.Row(
                     [
                         ft.Text(str(row.zeny_count), width=70),
@@ -492,7 +517,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
             )
         page.update()
 
-    def run_search() -> None:
+    def build_current_params(offset: int) -> SearchParams | None:
         # スキル未選択でもよい（他の条件のみで検索する）
         selected_names = [name for name, checkbox in skill_checkboxes.items() if checkbox.value]
 
@@ -503,7 +528,48 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
             except ValueError:
                 status_text.value = "コストは数値で入力してください"
                 page.update()
-                return
+                return None
+
+        conn = get_connection(db_path)
+        try:
+            registry = SkillRegistry(conn)
+            allowed_ids = registry.get_ids(selected_names)
+        finally:
+            conn.close()
+
+        return SearchParams(
+            allowed_skill_ids=allowed_ids,
+            threshold=int(threshold_dropdown.value or 1),
+            sort=sort_dropdown.value or "craft_order",
+            date_from=(date_from_field.value or None),
+            date_to=(date_to_field.value or None),
+            batch_id=(
+                int(batch_dropdown.value)
+                if batch_dropdown.value and batch_dropdown.value != _UNSELECTED
+                else None
+            ),
+            label=(
+                label_dropdown.value
+                if label_dropdown.value and label_dropdown.value != _UNSELECTED
+                else None
+            ),
+            min_total_cost=min_total_cost,
+            # 1件多く取得し、201件目があれば「次へ」を有効にする（COUNT(*)を避けるため）
+            limit=_PAGE_SIZE + 1,
+            offset=offset,
+        )
+
+    async def scroll_to_anchor() -> None:
+        # scroll_to()は非同期APIのため、ワーカースレッド（page.run_thread）からは
+        # page.run_task()経由でページのイベントループ上に実行を依頼する。
+        await view.scroll_to(scroll_key=_SCROLL_ANCHOR_KEY, duration=200)
+
+    def run_search_page(offset: int) -> None:
+        nonlocal current_offset, has_next_page
+
+        params = build_current_params(offset)
+        if params is None:
+            return
 
         set_busy(True)
         status_text.value = "検索中..."
@@ -511,44 +577,42 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
 
         conn = get_connection(db_path)
         try:
-            registry = SkillRegistry(conn)
-            allowed_ids = registry.get_ids(selected_names)
-            params = SearchParams(
-                allowed_skill_ids=allowed_ids,
-                threshold=int(threshold_dropdown.value or 1),
-                sort=sort_dropdown.value or "craft_order",
-                date_from=(date_from_field.value or None),
-                date_to=(date_to_field.value or None),
-                batch_id=(
-                    int(batch_dropdown.value)
-                    if batch_dropdown.value and batch_dropdown.value != _UNSELECTED
-                    else None
-                ),
-                label=(
-                    label_dropdown.value
-                    if label_dropdown.value and label_dropdown.value != _UNSELECTED
-                    else None
-                ),
-                min_total_cost=min_total_cost,
-            )
             rows = search_results(conn, params)
+            has_next_page = len(rows) > _PAGE_SIZE
+            rows = rows[:_PAGE_SIZE]
             breakdown = fetch_skill_breakdown(conn, [r.id for r in rows])
         finally:
             conn.close()
 
-        status_text.value = f"検索完了: {len(rows)}件（最大200件まで表示）"
+        current_offset = offset
+        status_text.value = (
+            f"検索結果: {current_offset + 1}〜{current_offset + len(rows)}件目を表示中"
+            if rows
+            else "検索結果: 該当する結果はありません"
+        )
         page.update()
         render_results(rows, breakdown)
         set_busy(False)
+        page.run_task(scroll_to_anchor)
 
-    def on_click(e: ft.Event[ft.Button]) -> None:
-        page.run_thread(run_search)
+    def on_search_click(e: ft.Event[ft.Button]) -> None:
+        page.run_thread(run_search_page, 0)
 
-    search_button.on_click = on_click
+    def on_prev_click(e: ft.Event[ft.Button]) -> None:
+        page.run_thread(run_search_page, max(0, current_offset - _PAGE_SIZE))
+
+    def on_next_click(e: ft.Event[ft.Button]) -> None:
+        page.run_thread(run_search_page, current_offset + _PAGE_SIZE)
+
+    search_button.on_click = on_search_click
+    for btn in prev_buttons:
+        btn.on_click = on_prev_click
+    for btn in next_buttons:
+        btn.on_click = on_next_click
 
     view = ft.Column(
         [
-            ft.Text("錬成結果の検索", size=20, weight=ft.FontWeight.BOLD),
+            ft.Text("錬成結果の検索", size=20, weight=ft.FontWeight.BOLD, key=_SCROLL_ANCHOR_KEY),
             ft.Text(
                 "選択したスキルの合計値（＋2は同じスキル2個分）が下の個数以上の結果を検索します。"
                 "集合外のスキルを含んでいても除外されません。"
@@ -568,8 +632,11 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
             ft.Row([search_button]),
             progress_bar,
             status_text,
+            ft.Row([prev_button_top, next_button_top]),
             ft.Divider(),
-            ft.Container(content=results_column, expand=True),
+            results_list,
+            ft.Divider(),
+            ft.Row([prev_button_bottom, next_button_bottom]),
         ],
         expand=True,
         scroll=ft.ScrollMode.AUTO,
