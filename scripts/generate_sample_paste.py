@@ -4,13 +4,14 @@
 
 観察された実データの規則性（100行サンプルより）:
 - ゼニーは1回あたり常に一定量（既定4）ずつ減少する
+- ゼニーは最大99,999・最小0のため、1回あたり4減少なら最大24,999件が理論上の上限
 - 「コスト」列は「スロ×6 + プラス値のスキルのコスト合計」（マイナス値のスキルは
   コストに含まれない）。コストはスキルマスター（skill_master.py）のコスト階層を参照する
 - プラス値は常に+1、マイナス値は常に-1
 - 「マイナス」フラグ（無/有）は、含まれるスキルに1つでもマイナス値があるときだけ「有」
 
 使い方:
-    .venv/Scripts/python.exe scripts/generate_sample_paste.py 25000 --out sample_paste_25000.txt
+    .venv/Scripts/python.exe scripts/generate_sample_paste.py 24999 --out sample_paste_24999.txt
 """
 
 import argparse
@@ -30,8 +31,9 @@ HEADER_LINE = (
     "第1名,第1値,第2名,第2値,第3名,第3値,第4名,第4値,第5名,第5値,第6名,第6値,対象"
 )
 
-INITIAL_ZENY = 4936
+INITIAL_ZENY = 99_999  # ゼニーの最大値
 ZENY_STEP = 4  # 実サンプルの観察上、1回あたり4ずつ減少する
+MAX_ROW_COUNT = INITIAL_ZENY // ZENY_STEP  # ゼニーが0を下回らない範囲での理論上の最大件数（24,999）
 SLOT_COST_PER_LEVEL = 6
 
 
@@ -90,16 +92,24 @@ def generate_block(row_count: int, seed: int = 42) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="実際の貼り付けを想定したサンプルデータを生成する")
-    parser.add_argument("row_count", type=int, nargs="?", default=25000)
+    parser.add_argument("row_count", type=int, nargs="?", default=MAX_ROW_COUNT)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--out", type=str, default=None)
     args = parser.parse_args()
 
-    text = generate_block(args.row_count, seed=args.seed)
+    row_count = args.row_count
+    if row_count > MAX_ROW_COUNT:
+        print(
+            f"警告: ゼニーは最大{INITIAL_ZENY}・最小0のため、"
+            f"理論上の最大件数（{MAX_ROW_COUNT}件）に切り詰めます。"
+        )
+        row_count = MAX_ROW_COUNT
 
-    out_path = Path(args.out) if args.out else Path(f"sample_paste_{args.row_count}.txt")
+    text = generate_block(row_count, seed=args.seed)
+
+    out_path = Path(args.out) if args.out else Path(f"sample_paste_{row_count}.txt")
     out_path.write_text(text, encoding="utf-8")
-    print(f"生成完了: {out_path} ({args.row_count}行)")
+    print(f"生成完了: {out_path} ({row_count}行)")
 
 
 if __name__ == "__main__":
