@@ -1,3 +1,5 @@
+import os
+import shutil
 from pathlib import Path
 
 import flet as ft
@@ -7,12 +9,40 @@ from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
 from app.ui.search_view import build_search_view
 
-DB_PATH = Path(__file__).resolve().parent.parent / "data" / "qurious_crafting_log.db"
+APP_DATA_DIR_NAME = "QuriousCraftingLog"
+DB_FILE_NAME = "qurious_crafting_log.db"
+
+# 以前はプロジェクト直下のdata/フォルダを使っていたが、
+# OneDrive等でデスクトップ配下が自動同期される環境（特にexe配布先）だと
+# 書き込み中のSQLiteファイルが同期と競合して壊れるおそれがあるため、
+# 同期対象外である%LOCALAPPDATA%配下へ変更した。
+_LEGACY_DB_PATH = Path(__file__).resolve().parent.parent / "data" / DB_FILE_NAME
+
+
+def _default_data_dir() -> Path:
+    local_app_data = os.getenv("LOCALAPPDATA")
+    if local_app_data:
+        return Path(local_app_data) / APP_DATA_DIR_NAME
+    return Path.home() / f".{APP_DATA_DIR_NAME.lower()}"  # Windows以外向けフォールバック
+
+
+DB_PATH = _default_data_dir() / DB_FILE_NAME
+
+
+def _migrate_legacy_db_if_needed() -> None:
+    """旧保存先（プロジェクト直下data/）にDBがあり、新保存先にまだ無い場合、一度だけ引き継ぐ。"""
+    if DB_PATH.exists() or not _LEGACY_DB_PATH.exists():
+        return
+    for suffix in ("", "-wal", "-shm"):
+        legacy_file = _LEGACY_DB_PATH.with_name(_LEGACY_DB_PATH.name + suffix)
+        if legacy_file.exists():
+            shutil.copy2(legacy_file, DB_PATH.with_name(DB_PATH.name + suffix))
 
 
 def main(page: ft.Page) -> None:
     page.title = "モンハン錬成結果 記録・検索"
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _migrate_legacy_db_if_needed()
 
     # スクロールバーの定義（デフォルトだと薄くて見えにくいため）
     page.theme = ft.Theme(
