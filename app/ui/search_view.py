@@ -21,6 +21,7 @@ from app.core.skill_sets import (
     save_skill_set,
 )
 from app.db.connection import get_connection
+from app.ui.skills_display import build_skills_wrap
 
 _SKILLS_PER_ROW = 5
 _SUMMARY_CHIPS_PER_ROW = 8
@@ -674,7 +675,6 @@ def build_search_view(
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
-                ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("バッチ", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
                 ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
@@ -684,17 +684,6 @@ def build_search_view(
         results_list.controls.append(ft.Divider(height=1))
 
         for index, row in enumerate(rows):
-            skills_spans: list[ft.TextSpan] = []
-            for i, (name, value) in enumerate(breakdown.get(row.id, [])):
-                if i > 0:
-                    skills_spans.append(ft.TextSpan(text="、"))
-                skills_spans.append(
-                    ft.TextSpan(
-                        text=f"{name}{value:+d}",
-                        # マイナス値のスキルは目立つように赤字にする
-                        style=ft.TextStyle(color=ft.Colors.RED) if value < 0 else None,
-                    )
-                )
             results_list.controls.append(
                 ft.Container(
                     content=ft.Row(
@@ -702,10 +691,9 @@ def build_search_view(
                             ft.Text(str(row.zeny_count), width=70),
                             ft.Text(str(row.zeny), width=80),
                             ft.Text(str(row.total_cost), width=80),
-                            ft.Text(spans=skills_spans, width=240),
+                            build_skills_wrap(breakdown.get(row.id, [])),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
-                            ft.Text("有" if row.has_deficiency else "無", width=80),
                             ft.Text(str(row.batch_id), width=60),
                             ft.Text(row.imported_at, width=160),
                             make_collected_checkbox(

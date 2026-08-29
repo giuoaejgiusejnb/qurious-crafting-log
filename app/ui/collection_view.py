@@ -5,7 +5,9 @@ import flet as ft
 
 from app.core.collection import CollectionLimitError, fetch_collected_in_batch, set_collected
 from app.core.history import list_batches
+from app.core.search import fetch_skill_breakdown
 from app.db.connection import get_connection
+from app.ui.skills_display import build_skills_wrap
 
 _UNSELECTED = "__unselected__"
 
@@ -67,7 +69,9 @@ def build_collection_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Cal
         checkbox.on_change = on_change
         return checkbox
 
-    def render_results(rows, batch_id: int) -> None:
+    def render_results(
+        rows, breakdown: dict[int, list[tuple[str, int]]], batch_id: int
+    ) -> None:
         results_list.controls.clear()
 
         if not rows:
@@ -80,6 +84,7 @@ def build_collection_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Cal
                 ft.Text("練成回数", width=70, weight=ft.FontWeight.BOLD),
                 ft.Text("ゼニー", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("コスト", width=80, weight=ft.FontWeight.BOLD),
+                ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
@@ -97,6 +102,7 @@ def build_collection_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Cal
                             ft.Text(str(row.zeny_count), width=70),
                             ft.Text(str(row.zeny), width=80),
                             ft.Text(str(row.total_cost), width=80),
+                            build_skills_wrap(breakdown.get(row.id, [])),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
                             ft.Text("有" if row.has_deficiency else "無", width=80),
@@ -120,12 +126,13 @@ def build_collection_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Cal
         conn = get_connection(db_path)
         try:
             rows = fetch_collected_in_batch(conn, batch_id)
+            breakdown = fetch_skill_breakdown(conn, [r.id for r in rows])
         finally:
             conn.close()
 
         status_text.value = f"バッチ #{batch_id}: 回収済み{len(rows)}件"
         page.update()
-        render_results(rows, batch_id)
+        render_results(rows, breakdown, batch_id)
 
     def on_batch_select(e: ft.Event[ft.Dropdown]) -> None:
         load_selected_batch()
