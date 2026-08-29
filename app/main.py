@@ -7,6 +7,7 @@ import flet as ft
 from app.ui.collection_view import build_collection_view
 from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
+from app.ui.keyboard_scroll import is_input_focused
 from app.ui.search_view import build_search_view
 
 APP_DATA_DIR_NAME = "QuriousCraftingLog"
@@ -122,6 +123,33 @@ def main(page: ft.Page) -> None:
         ),
     )
     page.add(tabs_control)
+
+    # --- キーボードの上下キー/PageUp/PageDownで、表示中のタブをスクロールする ---
+    # ドロップダウンやテキスト欄にフォーカスがある間は、そのコントロール自身の操作
+    # （選択肢移動やカーソル移動）を優先し、ページのスクロールは行わない
+    # （app/ui/keyboard_scroll.pyのis_input_focused()で判定）。
+    _ARROW_KEY_STEP = 60  # 上下矢印キー1回あたりのスクロール量(px)
+    _PAGE_KEY_STEP = 400  # PageUp/PageDownキー1回あたりのスクロール量(px)
+
+    _tab_views = [import_view, search_view, history_view, collection_view]
+
+    async def scroll_active_tab(delta: float) -> None:
+        active_view = _tab_views[tabs_control.selected_index]
+        await active_view.scroll_to(delta=delta, duration=0)
+
+    def on_keyboard_event(e: ft.KeyboardEvent) -> None:
+        if is_input_focused():
+            return
+        if e.key == "Arrow Down":
+            page.run_task(scroll_active_tab, _ARROW_KEY_STEP)
+        elif e.key == "Arrow Up":
+            page.run_task(scroll_active_tab, -_ARROW_KEY_STEP)
+        elif e.key == "Page Down":
+            page.run_task(scroll_active_tab, _PAGE_KEY_STEP)
+        elif e.key == "Page Up":
+            page.run_task(scroll_active_tab, -_PAGE_KEY_STEP)
+
+    page.on_keyboard_event = on_keyboard_event
 
 
 if __name__ == "__main__":

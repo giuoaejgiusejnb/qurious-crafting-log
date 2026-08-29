@@ -6,6 +6,7 @@ import flet as ft
 from app.core.importer import import_block
 from app.core.settings import get_json_setting, get_setting, set_json_setting, set_setting
 from app.db.connection import get_connection
+from app.ui.keyboard_scroll import guard_focus
 
 DEFAULT_EQUIPMENT_OPTIONS = ["ギルパレ脚", "クシャ胴", "マッスル腕"]
 LAST_SELECTION_KEY = "import_label_last_selection"
@@ -123,7 +124,7 @@ def build_import_view(
     label_radio_group = ft.RadioGroup(value=last_selection, content=options_container)
     label_radio_group.on_change = on_selection_change
 
-    new_option_field = ft.TextField(label="装備名", autofocus=True)
+    new_option_field = guard_focus(ft.TextField(label="装備名", autofocus=True))
 
     def close_add_dialog(e: ft.Event[ft.TextButton] | None = None) -> None:
         page.pop_dialog()
@@ -257,4 +258,5 @@ def build_import_view(
             status_text,
         ],
         expand=True,
+        scroll=ft.ScrollMode.AUTO,
     )

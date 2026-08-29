@@ -6,6 +6,7 @@ import flet as ft
 from app.core.collection import CollectionLimitError, fetch_collected_in_batch, set_collected
 from app.core.history import list_batches
 from app.db.connection import get_connection
+from app.ui.keyboard_scroll import guard_focus
 
 _UNSELECTED = "__unselected__"
 
@@ -15,11 +16,13 @@ def build_collection_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Cal
     status_text = ft.Text()
     results_list = ft.Column(spacing=2)
 
-    batch_dropdown = ft.Dropdown(
-        label="バッチを選択",
-        width=420,
-        value=_UNSELECTED,
-        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    batch_dropdown = guard_focus(
+        ft.Dropdown(
+            label="バッチを選択",
+            width=420,
+            value=_UNSELECTED,
+            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+        )
     )
 
     def refresh_batch_options() -> None:

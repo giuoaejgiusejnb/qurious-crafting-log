@@ -1,5 +1,5 @@
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import flet as ft
 
@@ -14,8 +14,14 @@ from app.core.search import (
 )
 from app.core.skill_master import ALL_MASTER_SKILL_NAMES, SKILL_MASTER
 from app.core.skill_registry import SkillRegistry
-from app.core.skill_sets import delete_skill_set, get_skill_set, list_skill_set_names, save_skill_set
+from app.core.skill_sets import (
+    delete_skill_set,
+    get_skill_set,
+    list_skill_set_names,
+    save_skill_set,
+)
 from app.db.connection import get_connection
+from app.ui.keyboard_scroll import guard_focus
 
 _SKILLS_PER_ROW = 5
 _SUMMARY_CHIPS_PER_ROW = 8
@@ -100,7 +106,9 @@ def build_search_view(
             current_set_name_text.value = "未選択"
 
     def update_selected_summary() -> None:
-        selected = [name for name, checkbox in skill_checkboxes.items() if checkbox.value]
+        selected = [
+            name for name, checkbox in skill_checkboxes.items() if checkbox.value
+        ]
         if not selected:
             selected_summary_container.content = ft.Text("スキル未選択", italic=True)
             return
@@ -127,7 +135,9 @@ def build_search_view(
         refresh_current_set_label()
         page.update()
 
-    def build_checkbox_rows(names: list[str], previously_selected: set[str]) -> ft.Control:
+    def build_checkbox_rows(
+        names: list[str], previously_selected: set[str]
+    ) -> ft.Control:
         controls: list[ft.Control] = []
         for name in names:
             checkbox = ft.Checkbox(label=name, value=name in previously_selected)
@@ -142,7 +152,9 @@ def build_search_view(
 
     def build_skill_checklist() -> ft.Control:
         # 再構築のたびにチェックボックスは作り直すが、既存の選択状態は引き継ぐ
-        previously_selected = {name for name, checkbox in skill_checkboxes.items() if checkbox.value}
+        previously_selected = {
+            name for name, checkbox in skill_checkboxes.items() if checkbox.value
+        }
         skill_checkboxes.clear()
         sections: list[ft.Control] = []
 
@@ -153,7 +165,9 @@ def build_search_view(
         registered_names = set(_load_skill_names(db_path))
         extra_names = sorted(registered_names - ALL_MASTER_SKILL_NAMES)
         if extra_names:
-            sections.append(ft.Text("その他（マスター未登録）", weight=ft.FontWeight.BOLD))
+            sections.append(
+                ft.Text("その他（マスター未登録）", weight=ft.FontWeight.BOLD)
+            )
             sections.append(build_checkbox_rows(extra_names, previously_selected))
 
         return ft.Column(sections, spacing=8)
@@ -173,7 +187,7 @@ def build_search_view(
     def close_skill_dialog(e: ft.Event[ft.Button]) -> None:
         page.pop_dialog()
 
-    save_set_name_field = ft.TextField(label="スキル集合の名前", width=260)
+    save_set_name_field = guard_focus(ft.TextField(label="スキル集合の名前", width=260))
     save_set_status_text = ft.Text(size=12)
 
     def do_save_skill_set(name: str, selected_names: list[str]) -> None:
@@ -212,7 +226,9 @@ def build_search_view(
 
     def save_current_skill_set(e: ft.Event[ft.Button]) -> None:
         name = (save_set_name_field.value or "").strip()
-        selected_names = [n for n, checkbox in skill_checkboxes.items() if checkbox.value]
+        selected_names = [
+            n for n, checkbox in skill_checkboxes.items() if checkbox.value
+        ]
 
         if not name:
             save_set_status_text.value = "名前を入力してください"
@@ -275,7 +291,9 @@ def build_search_view(
     select_skill_button.on_click = open_skill_dialog
 
     def open_current_selection_detail(e: ft.Event[ft.IconButton]) -> None:
-        selected = [name for name, checkbox in skill_checkboxes.items() if checkbox.value]
+        selected = [
+            name for name, checkbox in skill_checkboxes.items() if checkbox.value
+        ]
 
         def close_detail(e: ft.Event[ft.TextButton]) -> None:
             page.pop_dialog()
@@ -283,13 +301,17 @@ def build_search_view(
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text(current_skill_set_name or "現在選択中のスキル"),
-            content=ft.Text("、".join(selected) if selected else "（スキルが選択されていません）"),
+            content=ft.Text(
+                "、".join(selected) if selected else "（スキルが選択されていません）"
+            ),
             actions=[ft.TextButton(content="閉じる", on_click=close_detail)],
         )
         page.show_dialog(dialog)
 
     current_set_detail_button = ft.IconButton(
-        icon=ft.Icons.INFO_OUTLINE, tooltip="現在の選択内容を見る", on_click=open_current_selection_detail
+        icon=ft.Icons.INFO_OUTLINE,
+        tooltip="現在の選択内容を見る",
+        on_click=open_current_selection_detail,
     )
 
     def clear_current_selection_from_main(e: ft.Event[ft.IconButton]) -> None:
@@ -297,7 +319,9 @@ def build_search_view(
         page.update()
 
     clear_current_selection_button = ft.IconButton(
-        icon=ft.Icons.CLOSE, tooltip="未選択に戻す", on_click=clear_current_selection_from_main
+        icon=ft.Icons.CLOSE,
+        tooltip="未選択に戻す",
+        on_click=clear_current_selection_from_main,
     )
 
     def apply_named_skill_set(name: str) -> None:
@@ -334,7 +358,9 @@ def build_search_view(
         detail_dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text(f"「{name}」の内容"),
-            content=ft.Text("、".join(names) if names else "（スキルが登録されていません）"),
+            content=ft.Text(
+                "、".join(names) if names else "（スキルが登録されていません）"
+            ),
             actions=[
                 ft.TextButton(content="閉じる", on_click=close_detail),
                 ft.Button(content="このスキル集合を使う", on_click=use_this_set),
@@ -417,39 +443,50 @@ def build_search_view(
 
     update_selected_summary()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
-    batch_dropdown = ft.Dropdown(
-        label="対象バッチ",
-        width=380,
-        value=_UNSELECTED,
-        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    batch_dropdown = guard_focus(
+        ft.Dropdown(
+            label="対象バッチ",
+            width=380,
+            value=_UNSELECTED,
+            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+        )
     )
 
-    label_dropdown = ft.Dropdown(
-        label="防具（未選択なら全体）",
-        width=220,
-        value=_UNSELECTED,
-        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    label_dropdown = guard_focus(
+        ft.Dropdown(
+            label="防具（未選択なら全体）",
+            width=220,
+            value=_UNSELECTED,
+            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+        )
     )
 
-    date_from_dropdown = ft.Dropdown(
-        label="開始日",
-        width=180,
-        value=_UNSELECTED,
-        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    date_from_dropdown = guard_focus(
+        ft.Dropdown(
+            label="開始日",
+            width=180,
+            value=_UNSELECTED,
+            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+        )
     )
 
-    date_to_dropdown = ft.Dropdown(
-        label="終了日",
-        width=180,
-        value=_UNSELECTED,
-        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    date_to_dropdown = guard_focus(
+        ft.Dropdown(
+            label="終了日",
+            width=180,
+            value=_UNSELECTED,
+            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+        )
     )
 
     def _load_filter_data() -> None:
         batch_options = _load_batch_options(db_path)
         batch_dropdown.options = [
             ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
-            *[ft.DropdownOption(key=str(bid), text=text) for bid, text in batch_options],
+            *[
+                ft.DropdownOption(key=str(bid), text=text)
+                for bid, text in batch_options
+            ],
         ]
         if batch_dropdown.value not in {opt.key for opt in batch_dropdown.options}:
             batch_dropdown.value = _UNSELECTED
@@ -467,7 +504,9 @@ def build_search_view(
             ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
             *[ft.DropdownOption(key=d, text=d) for d in date_options],
         ]
-        if date_from_dropdown.value not in {opt.key for opt in date_from_dropdown.options}:
+        if date_from_dropdown.value not in {
+            opt.key for opt in date_from_dropdown.options
+        }:
             date_from_dropdown.value = _UNSELECTED
         date_to_dropdown.options = [
             ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
@@ -515,34 +554,42 @@ def build_search_view(
     batch_date_mode_group.on_change = on_batch_date_mode_change
     apply_batch_date_mode()  # 初期状態（未選択）に合わせてドロップダウンをdisabledにする
 
-    threshold_dropdown = ft.Dropdown(
-        label="必要な個数（1〜4）",
-        width=160,
-        value="2",
-        options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
+    threshold_dropdown = guard_focus(
+        ft.Dropdown(
+            label="必要な個数（1〜4）",
+            width=160,
+            value="2",
+            options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
+        )
     )
 
-    sort_dropdown = ft.Dropdown(
-        label="並び替え",
-        width=220,
-        value=DEFAULT_SORT,
-        options=[
-            ft.DropdownOption(key="craft_order", text="練成順"),
-            ft.DropdownOption(key="total_cost_desc", text="コスト（降順）"),
-        ],
+    sort_dropdown = guard_focus(
+        ft.Dropdown(
+            label="並び替え",
+            width=220,
+            value=DEFAULT_SORT,
+            options=[
+                ft.DropdownOption(key="craft_order", text="練成順"),
+                ft.DropdownOption(key="total_cost_desc", text="コスト（降順）"),
+            ],
+        )
     )
 
-    cost_min_dropdown = ft.Dropdown(
-        label="コスト以上",
-        width=140,
-        value=_DEFAULT_COST_MIN,
-        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+    cost_min_dropdown = guard_focus(
+        ft.Dropdown(
+            label="コスト以上",
+            width=140,
+            value=_DEFAULT_COST_MIN,
+            options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+        )
     )
-    cost_max_dropdown = ft.Dropdown(
-        label="コスト以下",
-        width=140,
-        value=_DEFAULT_COST_MAX,
-        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+    cost_max_dropdown = guard_focus(
+        ft.Dropdown(
+            label="コスト以下",
+            width=140,
+            value=_DEFAULT_COST_MAX,
+            options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+        )
     )
 
     # --- 検索条件（コスト/防具/スキル）の折りたたみ ---
@@ -574,7 +621,9 @@ def build_search_view(
         )
         page.update()
 
-    condition_toggle_button = ft.Button(content="検索条件を変更", on_click=toggle_condition_section)
+    condition_toggle_button = ft.Button(
+        content="検索条件を変更", on_click=toggle_condition_section
+    )
 
     progress_bar = ft.ProgressBar(width=420, value=0, visible=False)
     status_text = ft.Text()
@@ -604,7 +653,9 @@ def build_search_view(
         progress_bar.visible = busy
         page.update()
 
-    def make_collected_checkbox(result_id: int, batch_id: int, initial: bool) -> ft.Checkbox:
+    def make_collected_checkbox(
+        result_id: int, batch_id: int, initial: bool
+    ) -> ft.Checkbox:
         checkbox = ft.Checkbox(value=initial)
 
         def on_change(e: ft.Event[ft.Checkbox]) -> None:
@@ -613,7 +664,9 @@ def build_search_view(
                 try:
                     set_collected(conn, result_id, batch_id, checkbox.value)
                 except CollectionLimitError as exc:
-                    checkbox.value = False  # 上限超過は必ず「チェックしようとした」失敗なので戻す
+                    checkbox.value = (
+                        False  # 上限超過は必ず「チェックしようとした」失敗なので戻す
+                    )
                     status_text.value = str(exc)
             finally:
                 conn.close()
@@ -672,11 +725,15 @@ def build_search_view(
                             ft.Text("有" if row.has_deficiency else "無", width=80),
                             ft.Text(str(row.batch_id), width=60),
                             ft.Text(row.imported_at, width=160),
-                            make_collected_checkbox(row.id, row.batch_id, bool(row.collected)),
+                            make_collected_checkbox(
+                                row.id, row.batch_id, bool(row.collected)
+                            ),
                         ]
                     ),
                     # ゼブラストライプ: 1行おきに背景色を変えて行を目で追いやすくする
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST if index % 2 == 1 else None,
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST
+                    if index % 2 == 1
+                    else None,
                     padding=ft.Padding.symmetric(vertical=2, horizontal=4),
                 )
             )
@@ -684,7 +741,9 @@ def build_search_view(
 
     def build_current_params(offset: int) -> SearchParams | None:
         # スキル未選択でもよい（他の条件のみで検索する）
-        selected_names = [name for name, checkbox in skill_checkboxes.items() if checkbox.value]
+        selected_names = [
+            name for name, checkbox in skill_checkboxes.items() if checkbox.value
+        ]
 
         try:
             min_total_cost = int(cost_min_dropdown.value or _DEFAULT_COST_MIN)
@@ -728,7 +787,9 @@ def build_search_view(
             ),
             batch_id=(
                 int(batch_dropdown.value)
-                if mode == _BATCH_MODE and batch_dropdown.value and batch_dropdown.value != _UNSELECTED
+                if mode == _BATCH_MODE
+                and batch_dropdown.value
+                and batch_dropdown.value != _UNSELECTED
                 else None
             ),
             label=(
@@ -818,18 +879,23 @@ def build_search_view(
 
     view = ft.Column(
         [
-            ft.Text("錬成結果の検索", size=20, weight=ft.FontWeight.BOLD, key=_SCROLL_ANCHOR_KEY),
             ft.Text(
-                "選択したスキルの合計値（＋2は同じスキル2個分）が下の個数以上の結果を検索します。"
-                "集合外のスキルを含んでいても除外されません。"
+                "錬成結果の検索",
+                size=20,
+                weight=ft.FontWeight.BOLD,
+                key=_SCROLL_ANCHOR_KEY,
             ),
             ft.Text("検索を行うバッチの指定", weight=ft.FontWeight.BOLD),
-            batch_date_mode_group,
+            ft.Container(
+                content=batch_date_mode_group, padding=ft.Padding.only(left=24)
+            ),
             ft.Text("ソート", weight=ft.FontWeight.BOLD),
-            ft.Row([sort_dropdown]),
+            ft.Container(content=sort_dropdown, padding=ft.Padding.only(left=24)),
             ft.Text("条件指定", weight=ft.FontWeight.BOLD),
-            ft.Row([condition_toggle_button]),
-            condition_section,
+            ft.Container(
+                content=condition_toggle_button, padding=ft.Padding.only(left=24)
+            ),
+            ft.Container(content=condition_section, padding=ft.Padding.only(left=48)),
             ft.Row([search_button]),
             progress_bar,
             status_text,
