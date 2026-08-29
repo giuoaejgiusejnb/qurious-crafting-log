@@ -150,3 +150,11 @@ def fetch_distinct_labels(conn: sqlite3.Connection) -> list[str]:
         "SELECT DISTINCT label FROM results WHERE label IS NOT NULL ORDER BY label"
     ).fetchall()
     return [r[0] for r in rows]
+
+
+def fetch_distinct_import_dates(conn: sqlite3.Connection) -> list[str]:
+    """検索UIの取込日時フィルタ用に、実際に取込が行われた日付（YYYY-MM-DD）の一覧を取得する。"""
+    rows = conn.execute(
+        "SELECT DISTINCT substr(imported_at, 1, 10) FROM import_batches ORDER BY 1"
+    ).fetchall()
+    return [r[0] for r in rows]

@@ -4,7 +4,13 @@ from typing import Callable
 import flet as ft
 
 from app.core.collection import CollectionLimitError, set_collected
-from app.core.search import SearchParams, fetch_distinct_labels, fetch_skill_breakdown, search_results
+from app.core.search import (
+    SearchParams,
+    fetch_distinct_import_dates,
+    fetch_distinct_labels,
+    fetch_skill_breakdown,
+    search_results,
+)
 from app.core.skill_master import ALL_MASTER_SKILL_NAMES, SKILL_MASTER
 from app.core.skill_registry import SkillRegistry
 from app.core.skill_sets import delete_skill_set, get_skill_set, list_skill_set_names, save_skill_set
@@ -50,6 +56,14 @@ def _load_batch_options(db_path: Path) -> list[tuple[int, str]]:
             (batch_id, f"#{batch_id} {imported_at} {label or ''}".strip())
             for batch_id, imported_at, label in rows
         ]
+    finally:
+        conn.close()
+
+
+def _load_import_date_options(db_path: Path) -> list[str]:
+    conn = get_connection(db_path)
+    try:
+        return fetch_distinct_import_dates(conn)
     finally:
         conn.close()
 
@@ -401,6 +415,20 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
 
+    date_from_dropdown = ft.Dropdown(
+        label="取込日時 開始（未選択なら制限なし）",
+        width=220,
+        value=_UNSELECTED,
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    )
+
+    date_to_dropdown = ft.Dropdown(
+        label="取込日時 終了（未選択なら制限なし）",
+        width=220,
+        value=_UNSELECTED,
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    )
+
     def _load_filter_data() -> None:
         batch_options = _load_batch_options(db_path)
         batch_dropdown.options = [
@@ -417,6 +445,20 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         ]
         if label_dropdown.value not in {opt.key for opt in label_dropdown.options}:
             label_dropdown.value = _UNSELECTED
+
+        date_options = _load_import_date_options(db_path)
+        date_from_dropdown.options = [
+            ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+            *[ft.DropdownOption(key=d, text=d) for d in date_options],
+        ]
+        if date_from_dropdown.value not in {opt.key for opt in date_from_dropdown.options}:
+            date_from_dropdown.value = _UNSELECTED
+        date_to_dropdown.options = [
+            ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+            *[ft.DropdownOption(key=d, text=d) for d in date_options],
+        ]
+        if date_to_dropdown.value not in {opt.key for opt in date_to_dropdown.options}:
+            date_to_dropdown.value = _UNSELECTED
 
     def refresh_filter_options() -> None:
         """取込タブでの取込完了時に外部から呼ばれ、バッチ/防具の選択肢を最新化する。
@@ -445,8 +487,6 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         ],
     )
 
-    date_from_field = ft.TextField(label="取込日時 開始（例: 2026-01-01）", width=220)
-    date_to_field = ft.TextField(label="取込日時 終了", width=220)
     min_cost_field = ft.TextField(label="コスト以上（任意）", width=200)
 
     progress_bar = ft.ProgressBar(width=420, value=0, visible=False)
@@ -569,8 +609,17 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
             allowed_skill_ids=allowed_ids,
             threshold=int(threshold_dropdown.value or 1),
             sort=sort_dropdown.value or "craft_order",
-            date_from=(date_from_field.value or None),
-            date_to=(date_to_field.value or None),
+            date_from=(
+                date_from_dropdown.value
+                if date_from_dropdown.value and date_from_dropdown.value != _UNSELECTED
+                else None
+            ),
+            # 終了日はその日の終わりまでを含めるため、日末時刻を補完する
+            date_to=(
+                f"{date_to_dropdown.value}T23:59:59"
+                if date_to_dropdown.value and date_to_dropdown.value != _UNSELECTED
+                else None
+            ),
             batch_id=(
                 int(batch_dropdown.value)
                 if batch_dropdown.value and batch_dropdown.value != _UNSELECTED
@@ -656,7 +705,13 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                     sort_dropdown,
                 ]
             ),
-            ft.Row([date_from_field, date_to_field, min_cost_field]),
+            ft.Row(
+                [
+                    date_from_dropdown,
+                    date_to_dropdown,
+                    min_cost_field,
+                ]
+            ),
             ft.Row([batch_dropdown, label_dropdown]),
             ft.Row([search_button]),
             progress_bar,

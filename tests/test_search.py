@@ -3,7 +3,13 @@ import random
 import pytest
 
 from app.core.importer import import_block
-from app.core.search import SearchParams, fetch_distinct_labels, fetch_skill_breakdown, search_results
+from app.core.search import (
+    SearchParams,
+    fetch_distinct_import_dates,
+    fetch_distinct_labels,
+    fetch_skill_breakdown,
+    search_results,
+)
 from app.core.skill_registry import SkillRegistry
 from app.db.connection import get_connection
 from tests.helpers import build_row
@@ -317,3 +323,24 @@ def test_search_craft_order_lists_newest_batch_first(conn):
         (1, 1),
         (1, 2),
     ]
+
+
+def test_fetch_distinct_import_dates_returns_sorted_unique_dates(conn):
+    summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 2)]))
+    conn.execute(
+        "UPDATE import_batches SET imported_at = ? WHERE id = ?",
+        ("2026-08-22T10:00:00", summary1.batch_id),
+    )
+    summary2 = import_block(conn, build_row(zeny_count=2, skills=[("攻撃", 2)]))
+    conn.execute(
+        "UPDATE import_batches SET imported_at = ? WHERE id = ?",
+        ("2026-08-21T09:00:00", summary2.batch_id),
+    )
+    summary3 = import_block(conn, build_row(zeny_count=3, skills=[("攻撃", 2)]))
+    conn.execute(
+        "UPDATE import_batches SET imported_at = ? WHERE id = ?",
+        ("2026-08-22T15:00:00", summary3.batch_id),  # 同じ日に2回取込
+    )
+    conn.commit()
+
+    assert fetch_distinct_import_dates(conn) == ["2026-08-21", "2026-08-22"]
