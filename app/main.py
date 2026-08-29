@@ -73,7 +73,7 @@ def main(page: ft.Page) -> None:
     SEARCH_TAB_INDEX = 1
 
     def go_to_search_with_batch(batch_id: int) -> None:
-        """履歴タブ（今後は取込タブも）から呼ばれ、検索タブへ切り替えて指定バッチを対象に検索する。"""
+        """取込タブ・履歴タブから呼ばれ、検索タブへ切り替えて指定バッチを対象に検索する。"""
         tabs_control.selected_index = SEARCH_TAB_INDEX
         select_search_batch(batch_id)
 
@@ -86,12 +86,14 @@ def main(page: ft.Page) -> None:
         page, DB_PATH, on_batch_deleted=on_batch_deleted, on_batch_selected=go_to_search_with_batch
     )
 
-    def on_imported() -> None:
+    def on_imported(batch_id: int) -> None:
         refresh_search_filters()
         refresh_history_batches()
         refresh_collection_batches()
 
-    import_view = build_import_view(page, DB_PATH, on_imported=on_imported)
+    import_view = build_import_view(
+        page, DB_PATH, on_imported=on_imported, on_show_results=go_to_search_with_batch
+    )
 
     tabs_control = ft.Tabs(
         length=4,
