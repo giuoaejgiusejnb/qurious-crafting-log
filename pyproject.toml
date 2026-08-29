@@ -14,3 +14,24 @@ dev = [
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
+
+[tool.flet]
+product = "モンハン錬成結果 記録・検索"
+company = "qurious-crafting-log"
+org = "com.qurious-crafting-log"
+
+[tool.flet.app]
+exclude = [
+    ".venv",
+    ".git",
+    ".pytest_cache",
+    "__pycache__",
+    "tests",
+    "data",
+    "build",
+    "scripts",
+    "qurious_crafting_log.egg-info",
+    "sample_paste_24999.txt",
+    "PROGRESS.md",
+    "CLAUDE.md",
+]
