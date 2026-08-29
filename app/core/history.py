@@ -17,6 +17,20 @@ def list_batches(conn: sqlite3.Connection) -> list[BatchInfo]:
     return [BatchInfo(*row) for row in rows]
 
 
+def delete_batch(conn: sqlite3.Connection, batch_id: int) -> None:
+    """指定バッチと、それに属するresults/result_skillsを削除する。
+
+    IDの振り直しは行わない（削除後も既存の他バッチ・resultsのIDはそのまま）。
+    """
+    conn.execute(
+        "DELETE FROM result_skills WHERE result_id IN (SELECT id FROM results WHERE batch_id = ?)",
+        (batch_id,),
+    )
+    conn.execute("DELETE FROM results WHERE batch_id = ?", (batch_id,))
+    conn.execute("DELETE FROM import_batches WHERE id = ?", (batch_id,))
+    conn.commit()
+
+
 @dataclass
 class BatchResultRow:
     id: int

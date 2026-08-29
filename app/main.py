@@ -65,13 +65,26 @@ def main(page: ft.Page) -> None:
         )
     )
 
-    # 検索・履歴・回収タブを先に構築し、それぞれの「一覧を最新化する」関数を取得しておく。
+    # 検索・回収タブを先に構築し、それぞれの「一覧を最新化する」関数を取得しておく。
     # 取込タブ側は取込成功時にこれらを呼び出すことで、再起動なしに反映されるようにする。
-    # select_search_batchは検索タブに新設した「指定バッチを対象に検索する」関数で、
-    # 取込タブ・履歴タブからの連携用に今後配線する（現時点では未使用）。
     search_view, refresh_search_filters, select_search_batch = build_search_view(page, DB_PATH)
-    history_view, refresh_history_batches = build_history_view(page, DB_PATH)
     collection_view, refresh_collection_batches = build_collection_view(page, DB_PATH)
+
+    SEARCH_TAB_INDEX = 1
+
+    def go_to_search_with_batch(batch_id: int) -> None:
+        """履歴タブ（今後は取込タブも）から呼ばれ、検索タブへ切り替えて指定バッチを対象に検索する。"""
+        tabs_control.selected_index = SEARCH_TAB_INDEX
+        select_search_batch(batch_id)
+
+    def on_batch_deleted() -> None:
+        """履歴タブでのバッチ削除時に外部から呼ばれ、他タブのバッチ一覧を最新化する。"""
+        refresh_search_filters()
+        refresh_collection_batches()
+
+    history_view, refresh_history_batches = build_history_view(
+        page, DB_PATH, on_batch_deleted=on_batch_deleted, on_batch_selected=go_to_search_with_batch
+    )
 
     def on_imported() -> None:
         refresh_search_filters()
@@ -80,34 +93,33 @@ def main(page: ft.Page) -> None:
 
     import_view = build_import_view(page, DB_PATH, on_imported=on_imported)
 
-    page.add(
-        ft.Tabs(
-            length=4,
+    tabs_control = ft.Tabs(
+        length=4,
+        expand=True,
+        content=ft.Column(
             expand=True,
-            content=ft.Column(
-                expand=True,
-                controls=[
-                    ft.TabBar(
-                        tabs=[
-                            ft.Tab(label="取込"),
-                            ft.Tab(label="検索"),
-                            ft.Tab(label="履歴"),
-                            ft.Tab(label="回収"),
-                        ]
-                    ),
-                    ft.TabBarView(
-                        expand=True,
-                        controls=[
-                            import_view,
-                            search_view,
-                            history_view,
-                            collection_view,
-                        ],
-                    ),
-                ],
-            ),
-        )
+            controls=[
+                ft.TabBar(
+                    tabs=[
+                        ft.Tab(label="取込"),
+                        ft.Tab(label="検索"),
+                        ft.Tab(label="履歴"),
+                        ft.Tab(label="回収"),
+                    ]
+                ),
+                ft.TabBarView(
+                    expand=True,
+                    controls=[
+                        import_view,
+                        search_view,
+                        history_view,
+                        collection_view,
+                    ],
+                ),
+            ],
+        ),
     )
+    page.add(tabs_control)
 
 
 if __name__ == "__main__":

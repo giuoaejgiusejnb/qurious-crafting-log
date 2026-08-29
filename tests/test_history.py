@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.history import fetch_batch_results, list_batches
+from app.core.history import delete_batch, fetch_batch_results, list_batches
 from app.core.importer import import_block
 from app.db.connection import get_connection
 from tests.helpers import build_row
@@ -57,3 +57,32 @@ def test_fetch_batch_results_supports_pagination(conn):
 
 def test_fetch_batch_results_returns_empty_for_unknown_batch(conn):
     assert fetch_batch_results(conn, 9999) == []
+
+
+def test_delete_batch_removes_batch_and_its_results(conn):
+    summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 1)]))
+    summary2 = import_block(conn, build_row(zeny_count=2, skills=[("攻撃", 1)]))
+
+    delete_batch(conn, summary1.batch_id)
+
+    remaining_batch_ids = [b.id for b in list_batches(conn)]
+    assert remaining_batch_ids == [summary2.batch_id]
+    assert fetch_batch_results(conn, summary1.batch_id) == []
+    # 別バッチのresultsは影響を受けない
+    assert len(fetch_batch_results(conn, summary2.batch_id)) == 1
+    # result_skillsも一緒に消えていること（残っていると孤立行になる）
+    orphaned = conn.execute(
+        "SELECT COUNT(*) FROM result_skills WHERE result_id NOT IN (SELECT id FROM results)"
+    ).fetchone()[0]
+    assert orphaned == 0
+
+
+def test_delete_batch_does_not_renumber_remaining_ids(conn):
+    summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 1)]))
+    summary2 = import_block(conn, build_row(zeny_count=2, skills=[("攻撃", 1)]))
+    summary3 = import_block(conn, build_row(zeny_count=3, skills=[("攻撃", 1)]))
+
+    delete_batch(conn, summary2.batch_id)
+
+    remaining_batch_ids = {b.id for b in list_batches(conn)}
+    assert remaining_batch_ids == {summary1.batch_id, summary3.batch_id}
