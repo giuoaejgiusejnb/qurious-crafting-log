@@ -41,6 +41,8 @@ def _migrate_legacy_db_if_needed() -> None:
 
 def main(page: ft.Page) -> None:
     page.title = "モンハン錬成結果 記録・検索"
+    # OS側がダークモードだと配色が見づらくなるため、常にライトモードで固定表示する
+    page.theme_mode = ft.ThemeMode.LIGHT
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     _migrate_legacy_db_if_needed()
 
