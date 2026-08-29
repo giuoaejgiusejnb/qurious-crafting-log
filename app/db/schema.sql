@@ -23,7 +23,8 @@ CREATE TABLE IF NOT EXISTS results (
     print_resistance   INTEGER,
     skill_mask_lo      INTEGER NOT NULL DEFAULT 0,
     skill_mask_hi      INTEGER NOT NULL DEFAULT 0,
-    skill_sum          INTEGER NOT NULL DEFAULT 0
+    skill_sum          INTEGER NOT NULL DEFAULT 0,
+    collected          INTEGER NOT NULL DEFAULT 0   -- 回収済みか。0=未回収, 1=回収済み
 );
 
 CREATE TABLE IF NOT EXISTS result_skills (
@@ -37,8 +38,8 @@ CREATE INDEX IF NOT EXISTS idx_results_batch_id    ON results(batch_id);
 CREATE INDEX IF NOT EXISTS idx_results_imported_at ON results(imported_at);
 CREATE INDEX IF NOT EXISTS idx_results_total_cost  ON results(total_cost);
 CREATE INDEX IF NOT EXISTS idx_result_skills_skill_id ON result_skills(skill_id);
--- idx_results_label は connection.py の _migrate() 側で作成する
--- （新規DBのCREATE TABLEには既にlabel列が含まれるが、既存DBでは列追加が
+-- idx_results_label と idx_results_collected は connection.py の _migrate() 側で作成する
+-- （新規DBのCREATE TABLEには既に該当列が含まれるが、既存DBでは列追加が
 --   このスクリプトの後に行われるため、ここで参照すると失敗する）
 
 CREATE TABLE IF NOT EXISTS app_settings (

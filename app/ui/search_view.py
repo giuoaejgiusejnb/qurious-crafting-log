@@ -3,6 +3,7 @@ from typing import Callable
 
 import flet as ft
 
+from app.core.collection import CollectionLimitError, set_collected
 from app.core.search import SearchParams, fetch_distinct_labels, fetch_skill_breakdown, search_results
 from app.core.skill_master import ALL_MASTER_SKILL_NAMES, SKILL_MASTER
 from app.core.skill_registry import SkillRegistry
@@ -476,6 +477,24 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         progress_bar.visible = busy
         page.update()
 
+    def make_collected_checkbox(result_id: int, batch_id: int, initial: bool) -> ft.Checkbox:
+        checkbox = ft.Checkbox(value=initial)
+
+        def on_change(e: ft.Event[ft.Checkbox]) -> None:
+            conn = get_connection(db_path)
+            try:
+                try:
+                    set_collected(conn, result_id, batch_id, checkbox.value)
+                except CollectionLimitError as exc:
+                    checkbox.value = False  # 上限超過は必ず「チェックしようとした」失敗なので戻す
+                    status_text.value = str(exc)
+            finally:
+                conn.close()
+            page.update()
+
+        checkbox.on_change = on_change
+        return checkbox
+
     def render_results(rows, breakdown: dict[int, list[tuple[str, int]]]) -> None:
         results_list.controls.clear()
 
@@ -487,6 +506,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         header = ft.Row(
             [
                 ft.Text("練成回数", width=70, weight=ft.FontWeight.BOLD),
+                ft.Text("ゼニー", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("コスト", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
@@ -494,6 +514,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                 ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("バッチ", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
+                ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
             ]
         )
         results_list.controls.append(header)
@@ -506,6 +527,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                     content=ft.Row(
                         [
                             ft.Text(str(row.zeny_count), width=70),
+                            ft.Text(str(row.zeny), width=80),
                             ft.Text(str(row.total_cost), width=80),
                             ft.Text(skills_text, width=240),
                             ft.Text(str(row.slot_add), width=60),
@@ -513,6 +535,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                             ft.Text("有" if row.has_deficiency else "無", width=80),
                             ft.Text(str(row.batch_id), width=60),
                             ft.Text(row.imported_at, width=160),
+                            make_collected_checkbox(row.id, row.batch_id, bool(row.collected)),
                         ]
                     ),
                     # ゼブラストライプ: 1行おきに背景色を変えて行を目で追いやすくする

@@ -2,6 +2,7 @@ from pathlib import Path
 
 import flet as ft
 
+from app.ui.collection_view import build_collection_view
 from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
 from app.ui.search_view import build_search_view
@@ -32,20 +33,22 @@ def main(page: ft.Page) -> None:
         )
     )
 
-    # 検索・履歴タブを先に構築し、それぞれの「一覧を最新化する」関数を取得しておく。
+    # 検索・履歴・回収タブを先に構築し、それぞれの「一覧を最新化する」関数を取得しておく。
     # 取込タブ側は取込成功時にこれらを呼び出すことで、再起動なしに反映されるようにする。
     search_view, refresh_search_filters = build_search_view(page, DB_PATH)
     history_view, refresh_history_batches = build_history_view(page, DB_PATH)
+    collection_view, refresh_collection_batches = build_collection_view(page, DB_PATH)
 
     def on_imported() -> None:
         refresh_search_filters()
         refresh_history_batches()
+        refresh_collection_batches()
 
     import_view = build_import_view(page, DB_PATH, on_imported=on_imported)
 
     page.add(
         ft.Tabs(
-            length=3,
+            length=4,
             expand=True,
             content=ft.Column(
                 expand=True,
@@ -55,6 +58,7 @@ def main(page: ft.Page) -> None:
                             ft.Tab(label="取込"),
                             ft.Tab(label="検索"),
                             ft.Tab(label="履歴"),
+                            ft.Tab(label="回収"),
                         ]
                     ),
                     ft.TabBarView(
@@ -63,6 +67,7 @@ def main(page: ft.Page) -> None:
                             import_view,
                             search_view,
                             history_view,
+                            collection_view,
                         ],
                     ),
                 ],

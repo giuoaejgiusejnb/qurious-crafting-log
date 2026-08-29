@@ -49,11 +49,12 @@ class SearchResultRow:
     has_deficiency: int
     print_resistance: int
     skill_sum: int
+    collected: int
 
 
 _SELECT_COLUMNS = (
     "id, batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost, "
-    "has_deficiency, print_resistance, skill_sum"
+    "has_deficiency, print_resistance, skill_sum, collected"
 )
 
 

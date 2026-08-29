@@ -24,6 +24,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         else:
             conn.execute("ALTER TABLE results ADD COLUMN has_deficiency INTEGER")
 
+    if "collected" not in existing_columns:
+        conn.execute("ALTER TABLE results ADD COLUMN collected INTEGER NOT NULL DEFAULT 0")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_results_collected ON results(collected)")
+
     conn.commit()
 
 
