@@ -87,7 +87,6 @@ def build_collection_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Cal
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
-                ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
             ]
         )
@@ -105,7 +104,6 @@ def build_collection_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Cal
                             build_skills_wrap(breakdown.get(row.id, [])),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
-                            ft.Text("有" if row.has_deficiency else "無", width=80),
                             make_collected_checkbox(row.id, batch_id),
                         ]
                     ),
