@@ -4,10 +4,12 @@ from pathlib import Path
 
 import flet as ft
 
+from app.core.update_check import RELEASE_PAGE_URL, fetch_latest_release_tag, is_update_available
 from app.ui.collection_view import build_collection_view
 from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
 from app.ui.search_view import build_search_view
+from app.version import APP_VERSION
 
 APP_DATA_DIR_NAME = "QuriousCraftingLog"
 DB_FILE_NAME = "qurious_crafting_log.db"
@@ -142,6 +144,40 @@ def main(page: ft.Page) -> None:
             page.run_task(scroll_active_tab, -_PAGE_KEY_STEP)
 
     page.on_keyboard_event = on_keyboard_event
+
+    # --- 起動時の更新チェック ---
+    # GitHub Releasesの最新タグを取得し、現在のバージョン（app/version.py）と
+    # 異なれば「ダウンロードページを開くか」を確認する。オフライン等で取得に
+    # 失敗した場合は何も表示せず静かに諦める（更新チェックはあくまで補助機能）。
+    def show_update_dialog(latest_tag: str) -> None:
+        async def on_yes(e: ft.Event[ft.Button]) -> None:
+            page.pop_dialog()
+            await ft.UrlLauncher().launch_url(RELEASE_PAGE_URL)
+
+        def on_no(e: ft.Event[ft.TextButton]) -> None:
+            page.pop_dialog()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("新しいバージョンがあります"),
+            content=ft.Text(
+                f"現在のバージョン: {APP_VERSION}\n最新バージョン: {latest_tag}\n\n"
+                "ダウンロードページを開きますか？"
+            ),
+            actions=[
+                ft.TextButton(content="いいえ", on_click=on_no),
+                ft.Button(content="はい", on_click=on_yes),
+            ],
+        )
+        page.show_dialog(dialog)
+        page.update()
+
+    def check_for_update() -> None:
+        latest_tag = fetch_latest_release_tag()
+        if latest_tag is not None and is_update_available(APP_VERSION, latest_tag):
+            show_update_dialog(latest_tag)
+
+    page.run_thread(check_for_update)
 
 
 if __name__ == "__main__":
