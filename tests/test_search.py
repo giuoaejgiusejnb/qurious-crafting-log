@@ -172,6 +172,39 @@ def test_search_filters_by_min_total_cost(conn):
     assert [r.total_cost for r in rows] == [900]
 
 
+def test_search_filters_by_max_total_cost(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=1, total_cost=100, skills=[("攻撃", 2)]),
+            build_row(zeny_count=2, total_cost=900, skills=[("攻撃", 2)]),
+        ]
+    )
+    import_block(conn, text)
+
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, max_total_cost=500)
+    rows = search_results(conn, params)
+
+    assert [r.total_cost for r in rows] == [100]
+
+
+def test_search_filters_by_cost_range(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=1, total_cost=100, skills=[("攻撃", 2)]),
+            build_row(zeny_count=2, total_cost=500, skills=[("攻撃", 2)]),
+            build_row(zeny_count=3, total_cost=900, skills=[("攻撃", 2)]),
+        ]
+    )
+    import_block(conn, text)
+
+    params = SearchParams(
+        allowed_skill_ids=_allowed_ids(conn), threshold=2, min_total_cost=200, max_total_cost=700
+    )
+    rows = search_results(conn, params)
+
+    assert [r.total_cost for r in rows] == [500]
+
+
 def test_search_filters_by_date_range(conn):
     summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 2)]))
     conn.execute(

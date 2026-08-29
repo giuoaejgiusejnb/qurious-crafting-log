@@ -5,6 +5,7 @@ import flet as ft
 
 from app.core.collection import CollectionLimitError, set_collected
 from app.core.search import (
+    DEFAULT_SORT,
     SearchParams,
     fetch_distinct_import_dates,
     fetch_distinct_labels,
@@ -20,6 +21,14 @@ _SKILLS_PER_ROW = 5
 _SUMMARY_CHIPS_PER_ROW = 8
 _UNSELECTED = "__unselected__"
 _PAGE_SIZE = 200
+
+# コスト以上/以下ドロップダウンの選択肢（3の倍数、3〜42）
+_COST_OPTIONS = [str(n) for n in range(3, 43, 3)]
+_DEFAULT_COST_MIN = "3"
+_DEFAULT_COST_MAX = "42"
+
+_BATCH_MODE = "batch"
+_DATE_RANGE_MODE = "date_range"
 
 # ページ送り後にスクロールで戻る先の目印。今は画面最上部のタイトルに付けているが、
 # 例えば「上部の前へ/次へボタンの位置に戻る」等に変更したい場合は、
@@ -68,8 +77,15 @@ def _load_import_date_options(db_path: Path) -> list[str]:
         conn.close()
 
 
-def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callable[[], None]]:
-    """検索画面を構築する。戻り値は (画面コントロール, バッチ/防具選択肢を最新化する関数)。"""
+def build_search_view(
+    page: ft.Page, db_path: Path
+) -> tuple[ft.Control, Callable[[], None], Callable[[int], None]]:
+    """検索画面を構築する。
+
+    戻り値は (画面コントロール, バッチ/防具選択肢を最新化する関数,
+    指定バッチを対象に他の条件をリセットして検索を実行する関数)。
+    後者2つは取込タブ・履歴タブからの連携に使う。
+    """
     skill_checkboxes: dict[str, ft.Checkbox] = {}
     selected_summary_container = ft.Container()
     current_skill_set_name: str | None = None
@@ -402,8 +418,8 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
     update_selected_summary()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
     batch_dropdown = ft.Dropdown(
-        label="対象バッチ（未選択なら全体）",
-        width=420,
+        label="対象バッチ",
+        width=380,
         value=_UNSELECTED,
         options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
@@ -416,15 +432,15 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
     )
 
     date_from_dropdown = ft.Dropdown(
-        label="取込日時 開始（未選択なら制限なし）",
-        width=220,
+        label="開始日",
+        width=180,
         value=_UNSELECTED,
         options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
 
     date_to_dropdown = ft.Dropdown(
-        label="取込日時 終了（未選択なら制限なし）",
-        width=220,
+        label="終了日",
+        width=180,
         value=_UNSELECTED,
         options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
@@ -470,6 +486,35 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
 
     _load_filter_data()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
+    # --- バッチ指定/日付範囲指定の切り替え（ラジオボタン） ---
+    # 初期状態はどちらも未選択（絞り込みなしの状態からスタート）。
+    # 選択されていない側のドロップダウンはdisabledにして、どちらが有効かを分かりやすくする。
+    batch_mode_radio = ft.Radio(value=_BATCH_MODE, label="対象バッチで指定")
+    date_mode_radio = ft.Radio(value=_DATE_RANGE_MODE, label="取込日時の範囲で指定")
+
+    def apply_batch_date_mode() -> None:
+        mode = batch_date_mode_group.value
+        batch_dropdown.disabled = mode != _BATCH_MODE
+        date_from_dropdown.disabled = mode != _DATE_RANGE_MODE
+        date_to_dropdown.disabled = mode != _DATE_RANGE_MODE
+
+    def on_batch_date_mode_change(e: ft.Event[ft.RadioGroup]) -> None:
+        apply_batch_date_mode()
+        page.update()
+
+    batch_date_mode_group = ft.RadioGroup(
+        value=None,
+        content=ft.Column(
+            [
+                ft.Row([batch_mode_radio, batch_dropdown]),
+                ft.Row([date_mode_radio, date_from_dropdown, date_to_dropdown]),
+            ],
+            spacing=4,
+        ),
+    )
+    batch_date_mode_group.on_change = on_batch_date_mode_change
+    apply_batch_date_mode()  # 初期状態（未選択）に合わせてドロップダウンをdisabledにする
+
     threshold_dropdown = ft.Dropdown(
         label="必要な個数（1〜4）",
         width=160,
@@ -480,14 +525,56 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
     sort_dropdown = ft.Dropdown(
         label="並び替え",
         width=220,
-        value="craft_order",
+        value=DEFAULT_SORT,
         options=[
             ft.DropdownOption(key="craft_order", text="練成順"),
             ft.DropdownOption(key="total_cost_desc", text="コスト（降順）"),
         ],
     )
 
-    min_cost_field = ft.TextField(label="コスト以上（任意）", width=200)
+    cost_min_dropdown = ft.Dropdown(
+        label="コスト以上",
+        width=140,
+        value=_DEFAULT_COST_MIN,
+        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+    )
+    cost_max_dropdown = ft.Dropdown(
+        label="コスト以下",
+        width=140,
+        value=_DEFAULT_COST_MAX,
+        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+    )
+
+    # --- 検索条件（コスト/防具/スキル）の折りたたみ ---
+    condition_section = ft.Column(
+        [
+            ft.Text("コスト", weight=ft.FontWeight.BOLD),
+            ft.Row([cost_min_dropdown, cost_max_dropdown]),
+            ft.Text("防具", weight=ft.FontWeight.BOLD),
+            ft.Row([label_dropdown]),
+            ft.Text("スキル", weight=ft.FontWeight.BOLD),
+            ft.Row(
+                [
+                    select_skill_button,
+                    current_set_name_text,
+                    current_set_detail_button,
+                    clear_current_selection_button,
+                    threshold_dropdown,
+                ]
+            ),
+        ],
+        spacing=6,
+        visible=False,
+    )
+
+    def toggle_condition_section(e: ft.Event[ft.Button]) -> None:
+        condition_section.visible = not condition_section.visible
+        condition_toggle_button.content = (
+            "検索条件を閉じる" if condition_section.visible else "検索条件を変更"
+        )
+        page.update()
+
+    condition_toggle_button = ft.Button(content="検索条件を変更", on_click=toggle_condition_section)
 
     progress_bar = ft.ProgressBar(width=420, value=0, visible=False)
     status_text = ft.Text()
@@ -599,14 +686,19 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         # スキル未選択でもよい（他の条件のみで検索する）
         selected_names = [name for name, checkbox in skill_checkboxes.items() if checkbox.value]
 
-        min_total_cost: int | None = None
-        if min_cost_field.value:
-            try:
-                min_total_cost = int(min_cost_field.value)
-            except ValueError:
-                status_text.value = "コストは数値で入力してください"
-                page.update()
-                return None
+        try:
+            min_total_cost = int(cost_min_dropdown.value or _DEFAULT_COST_MIN)
+            max_total_cost = int(cost_max_dropdown.value or _DEFAULT_COST_MAX)
+        except ValueError:
+            status_text.value = "コストの指定が不正です"
+            page.update()
+            return None
+        if min_total_cost > max_total_cost:
+            status_text.value = "「コスト以上」は「コスト以下」より大きくできません"
+            page.update()
+            return None
+
+        mode = batch_date_mode_group.value
 
         conn = get_connection(db_path)
         try:
@@ -618,21 +710,25 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         return SearchParams(
             allowed_skill_ids=allowed_ids,
             threshold=int(threshold_dropdown.value or 1),
-            sort=sort_dropdown.value or "craft_order",
+            sort=sort_dropdown.value or DEFAULT_SORT,
             date_from=(
                 date_from_dropdown.value
-                if date_from_dropdown.value and date_from_dropdown.value != _UNSELECTED
+                if mode == _DATE_RANGE_MODE
+                and date_from_dropdown.value
+                and date_from_dropdown.value != _UNSELECTED
                 else None
             ),
             # 終了日はその日の終わりまでを含めるため、日末時刻を補完する
             date_to=(
                 f"{date_to_dropdown.value}T23:59:59"
-                if date_to_dropdown.value and date_to_dropdown.value != _UNSELECTED
+                if mode == _DATE_RANGE_MODE
+                and date_to_dropdown.value
+                and date_to_dropdown.value != _UNSELECTED
                 else None
             ),
             batch_id=(
                 int(batch_dropdown.value)
-                if batch_dropdown.value and batch_dropdown.value != _UNSELECTED
+                if mode == _BATCH_MODE and batch_dropdown.value and batch_dropdown.value != _UNSELECTED
                 else None
             ),
             label=(
@@ -641,6 +737,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                 else None
             ),
             min_total_cost=min_total_cost,
+            max_total_cost=max_total_cost,
             # 1件多く取得し、201件目があれば「次へ」を有効にする（COUNT(*)を避けるため）
             limit=_PAGE_SIZE + 1,
             offset=offset,
@@ -698,6 +795,27 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
     for btn in next_buttons:
         btn.on_click = on_next_click
 
+    def select_batch_and_search(batch_id: int) -> None:
+        """取込タブ・履歴タブから呼ばれ、他の条件をリセットして指定バッチのみを対象に検索する。"""
+        do_clear_selection()
+        cost_min_dropdown.value = _DEFAULT_COST_MIN
+        cost_max_dropdown.value = _DEFAULT_COST_MAX
+        label_dropdown.value = _UNSELECTED
+        threshold_dropdown.value = "2"
+        sort_dropdown.value = DEFAULT_SORT
+        date_from_dropdown.value = _UNSELECTED
+        date_to_dropdown.value = _UNSELECTED
+        condition_section.visible = False
+        condition_toggle_button.content = "検索条件を変更"
+
+        _load_filter_data()  # 対象バッチが選択肢に確実に含まれるようにする
+        batch_date_mode_group.value = _BATCH_MODE
+        batch_dropdown.value = str(batch_id)
+        apply_batch_date_mode()
+
+        page.update()
+        page.run_thread(run_search_page, 0)
+
     view = ft.Column(
         [
             ft.Text("錬成結果の検索", size=20, weight=ft.FontWeight.BOLD, key=_SCROLL_ANCHOR_KEY),
@@ -705,24 +823,13 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                 "選択したスキルの合計値（＋2は同じスキル2個分）が下の個数以上の結果を検索します。"
                 "集合外のスキルを含んでいても除外されません。"
             ),
-            ft.Row(
-                [
-                    select_skill_button,
-                    current_set_name_text,
-                    current_set_detail_button,
-                    clear_current_selection_button,
-                    threshold_dropdown,
-                    sort_dropdown,
-                ]
-            ),
-            ft.Row(
-                [
-                    date_from_dropdown,
-                    date_to_dropdown,
-                    min_cost_field,
-                ]
-            ),
-            ft.Row([batch_dropdown, label_dropdown]),
+            ft.Text("検索を行うバッチの指定", weight=ft.FontWeight.BOLD),
+            batch_date_mode_group,
+            ft.Text("ソート", weight=ft.FontWeight.BOLD),
+            ft.Row([sort_dropdown]),
+            ft.Text("条件指定", weight=ft.FontWeight.BOLD),
+            ft.Row([condition_toggle_button]),
+            condition_section,
             ft.Row([search_button]),
             progress_bar,
             status_text,
@@ -735,4 +842,4 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         expand=True,
         scroll=ft.ScrollMode.AUTO,
     )
-    return view, refresh_filter_options
+    return view, refresh_filter_options, select_batch_and_search

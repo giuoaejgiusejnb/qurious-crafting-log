@@ -23,6 +23,7 @@ class SearchParams:
     batch_id: int | None = None
     label: str | None = None
     min_total_cost: int | None = None
+    max_total_cost: int | None = None
     sort: str = DEFAULT_SORT
     limit: int = 200
     offset: int = 0
@@ -110,6 +111,9 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
     if params.min_total_cost is not None:
         query += " AND r.total_cost >= ?"
         query_args.append(params.min_total_cost)
+    if params.max_total_cost is not None:
+        query += " AND r.total_cost <= ?"
+        query_args.append(params.max_total_cost)
 
     query += f" ORDER BY {SORT_OPTIONS[params.sort]} LIMIT ? OFFSET ?"
     query_args.append(params.limit)

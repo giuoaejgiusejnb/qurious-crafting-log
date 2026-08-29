@@ -67,7 +67,9 @@ def main(page: ft.Page) -> None:
 
     # 検索・履歴・回収タブを先に構築し、それぞれの「一覧を最新化する」関数を取得しておく。
     # 取込タブ側は取込成功時にこれらを呼び出すことで、再起動なしに反映されるようにする。
-    search_view, refresh_search_filters = build_search_view(page, DB_PATH)
+    # select_search_batchは検索タブに新設した「指定バッチを対象に検索する」関数で、
+    # 取込タブ・履歴タブからの連携用に今後配線する（現時点では未使用）。
+    search_view, refresh_search_filters, select_search_batch = build_search_view(page, DB_PATH)
     history_view, refresh_history_batches = build_history_view(page, DB_PATH)
     collection_view, refresh_collection_batches = build_collection_view(page, DB_PATH)
 
