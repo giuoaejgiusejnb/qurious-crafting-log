@@ -561,7 +561,17 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
         results_list.controls.append(ft.Divider(height=1))
 
         for index, row in enumerate(rows):
-            skills_text = "、".join(f"{name}{value:+d}" for name, value in breakdown.get(row.id, []))
+            skills_spans: list[ft.TextSpan] = []
+            for i, (name, value) in enumerate(breakdown.get(row.id, [])):
+                if i > 0:
+                    skills_spans.append(ft.TextSpan(text="、"))
+                skills_spans.append(
+                    ft.TextSpan(
+                        text=f"{name}{value:+d}",
+                        # マイナス値のスキルは目立つように赤字にする
+                        style=ft.TextStyle(color=ft.Colors.RED) if value < 0 else None,
+                    )
+                )
             results_list.controls.append(
                 ft.Container(
                     content=ft.Row(
@@ -569,7 +579,7 @@ def build_search_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callabl
                             ft.Text(str(row.zeny_count), width=70),
                             ft.Text(str(row.zeny), width=80),
                             ft.Text(str(row.total_cost), width=80),
-                            ft.Text(skills_text, width=240),
+                            ft.Text(spans=skills_spans, width=240),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
                             ft.Text("有" if row.has_deficiency else "無", width=80),
