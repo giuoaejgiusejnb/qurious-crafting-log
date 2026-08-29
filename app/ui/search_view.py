@@ -21,7 +21,6 @@ from app.core.skill_sets import (
     save_skill_set,
 )
 from app.db.connection import get_connection
-from app.ui.keyboard_scroll import guard_focus
 
 _SKILLS_PER_ROW = 5
 _SUMMARY_CHIPS_PER_ROW = 8
@@ -187,7 +186,7 @@ def build_search_view(
     def close_skill_dialog(e: ft.Event[ft.Button]) -> None:
         page.pop_dialog()
 
-    save_set_name_field = guard_focus(ft.TextField(label="スキル集合の名前", width=260))
+    save_set_name_field = ft.TextField(label="スキル集合の名前", width=260)
     save_set_status_text = ft.Text(size=12)
 
     def do_save_skill_set(name: str, selected_names: list[str]) -> None:
@@ -443,40 +442,32 @@ def build_search_view(
 
     update_selected_summary()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
-    batch_dropdown = guard_focus(
-        ft.Dropdown(
-            label="対象バッチ",
-            width=380,
-            value=_UNSELECTED,
-            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
-        )
+    batch_dropdown = ft.Dropdown(
+        label="対象バッチ",
+        width=380,
+        value=_UNSELECTED,
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
 
-    label_dropdown = guard_focus(
-        ft.Dropdown(
-            label="防具（未選択なら全体）",
-            width=220,
-            value=_UNSELECTED,
-            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
-        )
+    label_dropdown = ft.Dropdown(
+        label="防具（未選択なら全体）",
+        width=220,
+        value=_UNSELECTED,
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
 
-    date_from_dropdown = guard_focus(
-        ft.Dropdown(
-            label="開始日",
-            width=180,
-            value=_UNSELECTED,
-            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
-        )
+    date_from_dropdown = ft.Dropdown(
+        label="開始日",
+        width=180,
+        value=_UNSELECTED,
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
 
-    date_to_dropdown = guard_focus(
-        ft.Dropdown(
-            label="終了日",
-            width=180,
-            value=_UNSELECTED,
-            options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
-        )
+    date_to_dropdown = ft.Dropdown(
+        label="終了日",
+        width=180,
+        value=_UNSELECTED,
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
     )
 
     def _load_filter_data() -> None:
@@ -554,42 +545,34 @@ def build_search_view(
     batch_date_mode_group.on_change = on_batch_date_mode_change
     apply_batch_date_mode()  # 初期状態（未選択）に合わせてドロップダウンをdisabledにする
 
-    threshold_dropdown = guard_focus(
-        ft.Dropdown(
-            label="必要な個数（1〜4）",
-            width=160,
-            value="2",
-            options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
-        )
+    threshold_dropdown = ft.Dropdown(
+        label="必要な個数（1〜4）",
+        width=160,
+        value="2",
+        options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
     )
 
-    sort_dropdown = guard_focus(
-        ft.Dropdown(
-            label="並び替え",
-            width=220,
-            value=DEFAULT_SORT,
-            options=[
-                ft.DropdownOption(key="craft_order", text="練成順"),
-                ft.DropdownOption(key="total_cost_desc", text="コスト（降順）"),
-            ],
-        )
+    sort_dropdown = ft.Dropdown(
+        label="並び替え",
+        width=220,
+        value=DEFAULT_SORT,
+        options=[
+            ft.DropdownOption(key="craft_order", text="練成順"),
+            ft.DropdownOption(key="total_cost_desc", text="コスト（降順）"),
+        ],
     )
 
-    cost_min_dropdown = guard_focus(
-        ft.Dropdown(
-            label="コスト以上",
-            width=140,
-            value=_DEFAULT_COST_MIN,
-            options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
-        )
+    cost_min_dropdown = ft.Dropdown(
+        label="コスト以上",
+        width=140,
+        value=_DEFAULT_COST_MIN,
+        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
     )
-    cost_max_dropdown = guard_focus(
-        ft.Dropdown(
-            label="コスト以下",
-            width=140,
-            value=_DEFAULT_COST_MAX,
-            options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
-        )
+    cost_max_dropdown = ft.Dropdown(
+        label="コスト以下",
+        width=140,
+        value=_DEFAULT_COST_MAX,
+        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
     )
 
     # --- 検索条件（コスト/防具/スキル）の折りたたみ ---
