@@ -779,9 +779,6 @@ def build_search_view(
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
-                # TODO: スキル欠けフィルタの動作確認用に一時的に表示している列。
-                # 確認が済んだら削除する。
-                ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("バッチ", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
                 ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
@@ -801,8 +798,6 @@ def build_search_view(
                             build_skills_wrap(breakdown.get(row.id, [])),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
-                            # TODO: 上のヘッダー同様、動作確認用の一時的な列
-                            ft.Text("有" if row.has_deficiency else "無", width=80),
                             ft.Text(str(row.batch_id), width=60),
                             ft.Text(row.imported_at, width=160),
                             make_collected_checkbox(

@@ -23,6 +23,7 @@ def build_history_view(
     回収確認サイドパネル（試作）の表示に使う。
     """
     batch_list_column = ft.Column(spacing=2)
+    summary_column = ft.Column(spacing=2)
 
     def confirm_delete_batch(batch_id: int) -> None:
         def do_delete(e: ft.Event[ft.Button]) -> None:
@@ -55,12 +56,39 @@ def build_history_view(
         if on_batch_selected is not None:
             on_batch_selected(batch_id)
 
+    def build_summary(batches) -> None:
+        """総練成数・防具ごとの練成数を組み立てる（件数0の防具は表示しない）。"""
+        total_count = sum(b.row_count for b in batches)
+
+        label_counts: dict[str, int] = {}
+        for b in batches:
+            if b.label:
+                label_counts[b.label] = label_counts.get(b.label, 0) + b.row_count
+
+        summary_column.controls.clear()
+        summary_column.controls.append(ft.Text(f"総練成数：{total_count}"))
+        summary_column.controls.append(ft.Text("防具ごとの練成数", weight=ft.FontWeight.BOLD))
+        if not label_counts:
+            summary_column.controls.append(
+                ft.Container(content=ft.Text("（防具の記録はまだありません）", italic=True), padding=ft.Padding.only(left=24))
+            )
+        else:
+            for label, count in sorted(label_counts.items()):
+                summary_column.controls.append(
+                    ft.Container(
+                        content=ft.Text(f"{label}の練成数：{count}"),
+                        padding=ft.Padding.only(left=24),
+                    )
+                )
+
     def load_batches() -> None:
         conn = get_connection(db_path)
         try:
             batches = list_batches(conn)
         finally:
             conn.close()
+
+        build_summary(batches)
 
         batch_list_column.controls.clear()
         if not batches:
@@ -125,6 +153,9 @@ def build_history_view(
 
     view = ft.Column(
         [
+            ft.Text("練成履歴", size=20, weight=ft.FontWeight.BOLD),
+            summary_column,
+            ft.Divider(),
             ft.Text("取込履歴", size=20, weight=ft.FontWeight.BOLD),
             ft.Text("バッチをクリックすると、検索タブでそのバッチを対象に検索します。"),
             ft.Container(content=batch_list_column, padding=ft.Padding.symmetric(vertical=8)),
