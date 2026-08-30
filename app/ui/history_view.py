@@ -12,12 +12,15 @@ def build_history_view(
     db_path: Path,
     on_batch_deleted: Callable[[], None] | None = None,
     on_batch_selected: Callable[[int], None] | None = None,
+    on_collection_check: Callable[[int], None] | None = None,
 ) -> tuple[ft.Control, Callable[[], None]]:
     """履歴画面を構築する。戻り値は (画面コントロール, バッチ一覧を最新化する関数)。
 
     on_batch_deletedはバッチ削除時に呼ばれ、他タブのバッチ一覧更新に使う。
     on_batch_selectedはバッチ行クリック時にバッチIDを渡して呼ばれ、
     検索タブへの遷移（対象バッチとして検索実行）に使う。
+    on_collection_checkは「回収確認」ボタン押下時にバッチIDを渡して呼ばれ、
+    回収確認サイドパネル（試作）の表示に使う。
     """
     batch_list_column = ft.Column(spacing=2)
 
@@ -92,6 +95,12 @@ def build_history_view(
                             on_click=lambda e, bid=batch.id: on_batch_row_click(bid),
                             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST if index % 2 == 1 else None,
                             padding=ft.Padding.symmetric(vertical=4, horizontal=4),
+                        ),
+                        ft.TextButton(
+                            content="回収確認",
+                            on_click=lambda e, bid=batch.id: (
+                                on_collection_check(bid) if on_collection_check else None
+                            ),
                         ),
                         ft.IconButton(
                             icon=ft.Icons.DELETE,

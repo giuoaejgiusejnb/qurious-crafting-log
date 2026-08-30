@@ -85,8 +85,44 @@ def main(page: ft.Page) -> None:
         refresh_search_filters()
         refresh_collection_batches()
 
+    # --- 回収確認サイドパネル（試作） ---
+    # タブとは独立して画面の横に居座り、どのタブを表示していても回収確認の
+    # 内容を見比べられるようにする、という案の動作確認用。中身はまだ仮。
+    collection_panel_body = ft.Text()
+
+    def close_collection_panel(e: ft.Event[ft.IconButton]) -> None:
+        collection_panel.visible = False
+        page.update()
+
+    collection_panel = ft.Container(
+        content=ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text("回収確認（試作）", weight=ft.FontWeight.BOLD),
+                        ft.IconButton(icon=ft.Icons.CLOSE, on_click=close_collection_panel),
+                    ]
+                ),
+                collection_panel_body,
+            ]
+        ),
+        width=280,
+        padding=12,
+        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
+        visible=False,
+    )
+
+    def open_collection_panel(batch_id: int) -> None:
+        collection_panel_body.value = f"バッチ #{batch_id} の回収確認（中身は試作のため未実装）"
+        collection_panel.visible = True
+        page.update()
+
     history_view, refresh_history_batches = build_history_view(
-        page, DB_PATH, on_batch_deleted=on_batch_deleted, on_batch_selected=go_to_search_with_batch
+        page,
+        DB_PATH,
+        on_batch_deleted=on_batch_deleted,
+        on_batch_selected=go_to_search_with_batch,
+        on_collection_check=open_collection_panel,
     )
 
     def on_imported(batch_id: int) -> None:
@@ -128,7 +164,7 @@ def main(page: ft.Page) -> None:
             ],
         ),
     )
-    page.add(tabs_control)
+    page.add(ft.Row([tabs_control, collection_panel], expand=True, spacing=0))
 
     # --- キーボードのPageUp/PageDownで、表示中のタブをスクロールする ---
     # 矢印キー（上下）はドロップダウンの選択肢移動などコントロール側でも使われており、
