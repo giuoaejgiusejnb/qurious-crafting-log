@@ -9,6 +9,15 @@ from app.core.armor_defaults import ArmorSearchDefaults, get_armor_defaults, set
 from app.core.backup import backup_database, restore_database
 from app.core.equipment import list_all_equipment_options
 from app.core.search import COST_OPTIONS, DEFAULT_SORT, RESISTANCE_OPTIONS
+from app.core.skill_colors import (
+    COLOR_CHOICES,
+    DEFAULT_NEGATIVE_COLOR,
+    DEFAULT_POSITIVE_COLOR,
+    get_negative_skill_color,
+    get_positive_skill_color,
+    set_negative_skill_color,
+    set_positive_skill_color,
+)
 from app.core.skill_sets import list_skill_set_names
 from app.core.update_check import is_update_check_enabled, set_update_check_enabled
 from app.db.connection import get_connection
@@ -378,10 +387,60 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
             spacing=8,
         )
 
+    def build_skill_color_content() -> ft.Control:
+        """検索結果・回収一覧のスキル表示色（プラス値/マイナス値）の設定。"""
+        conn = get_connection(db_path)
+        try:
+            positive = get_positive_skill_color(conn)
+            negative = get_negative_skill_color(conn)
+        finally:
+            conn.close()
+
+        status_text = ft.Text(size=12)
+
+        positive_dropdown = ft.Dropdown(
+            label="プラススキルの色",
+            width=220,
+            value=positive,
+            options=[ft.DropdownOption(key=key, text=label) for key, label in COLOR_CHOICES],
+        )
+        negative_dropdown = ft.Dropdown(
+            label="マイナススキルの色",
+            width=220,
+            value=negative,
+            options=[ft.DropdownOption(key=key, text=label) for key, label in COLOR_CHOICES],
+        )
+
+        def do_save(e: ft.Event[ft.Button]) -> None:
+            conn = get_connection(db_path)
+            try:
+                set_positive_skill_color(conn, positive_dropdown.value or DEFAULT_POSITIVE_COLOR)
+                set_negative_skill_color(conn, negative_dropdown.value or DEFAULT_NEGATIVE_COLOR)
+            finally:
+                conn.close()
+            status_text.value = "保存しました"
+            page.update()
+
+        return ft.Column(
+            [
+                ft.Text("スキル表示色", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "検索結果一覧・回収確認パネルのスキル欄で、値がプラス/マイナスの"
+                    "スキルにそれぞれ使う色を選べます。"
+                ),
+                ft.Row([positive_dropdown]),
+                ft.Row([negative_dropdown]),
+                ft.Row([ft.Button(content="保存", on_click=do_save)]),
+                status_text,
+            ],
+            spacing=8,
+        )
+
     # 設定タブ内の縦向きナビゲーション（NavigationRail）に並べる項目。
     items: list[tuple[str, str, Callable[[], ft.Control]]] = [
         ("更新チェック", ft.Icons.SYSTEM_UPDATE_OUTLINED, build_update_check_content),
         ("防具ごとの検索初期設定", ft.Icons.TUNE_OUTLINED, build_armor_defaults_content),
+        ("スキル表示色", ft.Icons.PALETTE_OUTLINED, build_skill_color_content),
         ("バックアップ", ft.Icons.SAVE_OUTLINED, build_backup_content),
     ]
 

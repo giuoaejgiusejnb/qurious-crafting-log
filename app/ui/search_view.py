@@ -15,6 +15,7 @@ from app.core.search import (
     fetch_skill_breakdown,
     search_results,
 )
+from app.core.skill_colors import get_negative_skill_color, get_positive_skill_color
 from app.core.skill_master import ALL_MASTER_SKILL_NAMES, SKILL_MASTER
 from app.core.skill_registry import SkillRegistry
 from app.core.skill_sets import (
@@ -821,6 +822,13 @@ def build_search_view(
             page.update()
             return
 
+        conn = get_connection(db_path)
+        try:
+            positive_color = get_positive_skill_color(conn)
+            negative_color = get_negative_skill_color(conn)
+        finally:
+            conn.close()
+
         header = ft.Row(
             [
                 ft.Text("練成回数", width=70, weight=ft.FontWeight.BOLD),
@@ -845,7 +853,11 @@ def build_search_view(
                             ft.Text(str(row.zeny_count), width=70),
                             ft.Text(str(row.zeny), width=80),
                             ft.Text(str(row.total_cost), width=80),
-                            build_skills_wrap(breakdown.get(row.id, [])),
+                            build_skills_wrap(
+                                breakdown.get(row.id, []),
+                                positive_color=positive_color,
+                                negative_color=negative_color,
+                            ),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
                             ft.Text(str(row.batch_id), width=60),
