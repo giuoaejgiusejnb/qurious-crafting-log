@@ -4,7 +4,14 @@ from pathlib import Path
 
 import flet as ft
 
-from app.core.update_check import RELEASE_PAGE_URL, fetch_latest_release_tag, is_update_available
+from app.core.update_check import (
+    RELEASE_PAGE_URL,
+    fetch_latest_release_tag,
+    is_update_available,
+    is_update_check_enabled,
+    set_update_check_enabled,
+)
+from app.db.connection import get_connection
 from app.ui.collection_view import build_collection_view
 from app.ui.contact_view import build_contact_view
 from app.ui.history_view import build_history_view
@@ -201,20 +208,40 @@ def main(page: ft.Page) -> None:
     # GitHub Releasesの最新タグを取得し、現在のバージョン（app/version.py）と
     # 異なれば「ダウンロードページを開くか」を確認する。オフライン等で取得に
     # 失敗した場合は何も表示せず静かに諦める（更新チェックはあくまで補助機能）。
+    def apply_dont_show_again(checkbox: ft.Checkbox) -> None:
+        if checkbox.value:
+            conn = get_connection(DB_PATH)
+            try:
+                set_update_check_enabled(conn, False)
+            finally:
+                conn.close()
+
     def show_update_dialog(latest_tag: str) -> None:
+        dont_show_again_checkbox = ft.Checkbox(
+            label="次からは表示しない（設定タブでいつでも変更できます）"
+        )
+
         async def on_yes(e: ft.Event[ft.Button]) -> None:
+            apply_dont_show_again(dont_show_again_checkbox)
             page.pop_dialog()
             await ft.UrlLauncher().launch_url(RELEASE_PAGE_URL)
 
         def on_no(e: ft.Event[ft.TextButton]) -> None:
+            apply_dont_show_again(dont_show_again_checkbox)
             page.pop_dialog()
 
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("新しいバージョンがあります"),
-            content=ft.Text(
-                f"現在のバージョン: {APP_VERSION}\n最新バージョン: {latest_tag}\n\n"
-                "ダウンロードページを開きますか？"
+            content=ft.Column(
+                [
+                    ft.Text(
+                        f"現在のバージョン: {APP_VERSION}\n最新バージョン: {latest_tag}\n\n"
+                        "ダウンロードページを開きますか？"
+                    ),
+                    dont_show_again_checkbox,
+                ],
+                tight=True,
             ),
             actions=[
                 ft.TextButton(content="いいえ", on_click=on_no),
@@ -225,6 +252,14 @@ def main(page: ft.Page) -> None:
         page.update()
 
     def check_for_update() -> None:
+        conn = get_connection(DB_PATH)
+        try:
+            enabled = is_update_check_enabled(conn)
+        finally:
+            conn.close()
+        if not enabled:
+            return
+
         latest_tag = fetch_latest_release_tag()
         if latest_tag is not None and is_update_available(APP_VERSION, latest_tag):
             show_update_dialog(latest_tag)

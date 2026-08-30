@@ -3,7 +3,22 @@ import urllib.error
 from io import BytesIO
 from unittest.mock import patch
 
-from app.core.update_check import fetch_latest_release_tag, is_update_available
+import pytest
+
+from app.core.update_check import (
+    fetch_latest_release_tag,
+    is_update_available,
+    is_update_check_enabled,
+    set_update_check_enabled,
+)
+from app.db.connection import get_connection
+
+
+@pytest.fixture
+def conn(tmp_path):
+    connection = get_connection(tmp_path / "test.db")
+    yield connection
+    connection.close()
 
 
 def _fake_response(payload: dict) -> BytesIO:
@@ -47,3 +62,15 @@ def test_fetch_latest_release_tag_returns_none_on_missing_tag_name():
         return_value=_fake_response({}),
     ):
         assert fetch_latest_release_tag() is None
+
+
+def test_is_update_check_enabled_true_by_default(conn):
+    assert is_update_check_enabled(conn) is True
+
+
+def test_set_update_check_enabled_persists_value(conn):
+    set_update_check_enabled(conn, False)
+    assert is_update_check_enabled(conn) is False
+
+    set_update_check_enabled(conn, True)
+    assert is_update_check_enabled(conn) is True
