@@ -487,7 +487,7 @@ def build_search_view(
                     spacing=0,
                 )
             )
-        return ft.Row(entries, wrap=True, spacing=4, run_spacing=4)
+        return ft.Row(entries)
 
     saved_sets_list_container = ft.Container()
 
@@ -658,6 +658,7 @@ def build_search_view(
                     select_skill_button,
                 ]
             ),
+            ft.Text("スキル欠けの有無"),
         ],
         spacing=6,
         visible=False,
