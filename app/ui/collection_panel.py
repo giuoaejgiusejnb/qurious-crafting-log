@@ -8,8 +8,8 @@ from app.core.search import fetch_skill_breakdown
 from app.db.connection import get_connection
 from app.ui.skills_display import build_skills_wrap
 
-_PANEL_WIDTH = 620
-_SKILLS_COLUMN_WIDTH = 180
+_PANEL_WIDTH = 260
+_SKILLS_WRAP_WIDTH = 220
 
 
 def build_collection_panel(
@@ -64,36 +64,34 @@ def build_collection_panel(
             page.update()
             return
 
-        header = ft.Row(
-            [
-                ft.Text("練成回数", width=60, weight=ft.FontWeight.BOLD),
-                ft.Text("コスト", width=60, weight=ft.FontWeight.BOLD),
-                ft.Text("スキル", width=_SKILLS_COLUMN_WIDTH, weight=ft.FontWeight.BOLD),
-                ft.Text("スロット", width=50, weight=ft.FontWeight.BOLD),
-                ft.Text("耐性", width=50, weight=ft.FontWeight.BOLD),
-                ft.Text("回収", width=50, weight=ft.FontWeight.BOLD),
-            ]
-        )
-        results_list.controls.append(header)
-        results_list.controls.append(ft.Divider(height=1))
-
+        # パネルの幅が狭い（検索タブの回収列が隠れない程度）ため、表形式ではなく
+        # 1件ずつカード状に積む表示にする。項目は検索結果一覧からバッチIDと
+        # 取込日時を除いたすべて（練成回数・ゼニー・コスト・スキル・スロット・耐性・回収）。
         for index, row in enumerate(rows):
             results_list.controls.append(
                 ft.Container(
-                    content=ft.Row(
+                    content=ft.Column(
                         [
-                            ft.Text(str(row.zeny_count), width=60),
-                            ft.Text(str(row.total_cost), width=60),
-                            build_skills_wrap(breakdown.get(row.id, []), width=_SKILLS_COLUMN_WIDTH),
-                            ft.Text(str(row.slot_add), width=50),
-                            ft.Text(str(row.print_resistance), width=50),
-                            make_collected_checkbox(row.id, batch_id),
-                        ]
+                            ft.Row(
+                                [
+                                    ft.Text(f"練成{row.zeny_count}回目", weight=ft.FontWeight.BOLD),
+                                    make_collected_checkbox(row.id, batch_id),
+                                ],
+                                alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                            ),
+                            ft.Text(f"ゼニー: {row.zeny}　コスト: {row.total_cost}", size=12),
+                            ft.Text(
+                                f"スロット: {row.slot_add}　耐性: {row.print_resistance}", size=12
+                            ),
+                            build_skills_wrap(breakdown.get(row.id, []), width=_SKILLS_WRAP_WIDTH),
+                        ],
+                        spacing=2,
                     ),
                     bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST if index % 2 == 1 else None,
-                    padding=ft.Padding.symmetric(vertical=2, horizontal=4),
+                    padding=ft.Padding.symmetric(vertical=4, horizontal=4),
                 )
             )
+            results_list.controls.append(ft.Divider(height=1))
         page.update()
 
     def close_panel(e: ft.Event[ft.IconButton] | None = None) -> None:
