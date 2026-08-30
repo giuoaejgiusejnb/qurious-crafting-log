@@ -18,8 +18,8 @@ from app.db.connection import get_connection
 _UNSELECTED = "__unselected__"
 
 
-def build_settings_view(page: ft.Page, db_path: Path) -> ft.Control:
-    """設定画面を構築する。
+def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callable[[], None]]:
+    """設定画面を構築する。戻り値は (画面コントロール, 表示中の項目を読み直す関数)。
 
     左側に縦向きのナビゲーション（NavigationRail）、右側に選択中の項目の
     内容を表示する2カラム構成。
@@ -308,7 +308,15 @@ def build_settings_view(page: ft.Page, db_path: Path) -> ft.Control:
 
     show_item(0)  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
-    return ft.Row(
+    def refresh() -> None:
+        """表示中の項目を読み直す。設定タブがアプリの他タブから選ばれるたびに
+        main.py側から呼ばれ、検索タブでのスキル集合の作成・削除や取込タブでの
+        防具追加など、他タブでの変更を反映する（ページ接続後にのみ呼ばれる想定）。
+        """
+        show_item(nav_rail.selected_index or 0)
+        page.update()
+
+    view = ft.Row(
         [
             nav_rail,
             ft.VerticalDivider(width=1),
@@ -316,3 +324,4 @@ def build_settings_view(page: ft.Page, db_path: Path) -> ft.Control:
         ],
         expand=True,
     )
+    return view, refresh
