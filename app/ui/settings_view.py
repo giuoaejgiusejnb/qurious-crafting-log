@@ -1,9 +1,12 @@
+import sqlite3
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 import flet as ft
 
 from app.core.armor_defaults import ArmorSearchDefaults, get_armor_defaults, set_armor_defaults
+from app.core.backup import backup_database, restore_database
 from app.core.equipment import list_all_equipment_options
 from app.core.search import COST_OPTIONS, DEFAULT_SORT, RESISTANCE_OPTIONS
 from app.core.skill_sets import list_skill_set_names
@@ -284,21 +287,102 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
             expand=True,
         )
 
-    def build_placeholder_content(label: str) -> ft.Control:
+    def build_backup_content() -> ft.Control:
+        """DBファイルのバックアップ・復元（実処理はapp/core/backup.pyに集約）。"""
+        status_text = ft.Text(size=12)
+
+        async def do_backup(e: ft.Event[ft.Button]) -> None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            dest_path = await ft.FilePicker().save_file(
+                dialog_title="バックアップの保存先を選択",
+                file_name=f"qurious_crafting_log_backup_{timestamp}.db",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["db"],
+            )
+            if not dest_path:
+                return  # キャンセル
+
+            try:
+                backup_database(db_path, dest_path)
+            except sqlite3.Error as exc:
+                status_text.value = f"バックアップに失敗しました: {exc}"
+                page.update()
+                return
+
+            status_text.value = f"バックアップを保存しました: {dest_path}"
+            page.update()
+
+        def perform_restore(source_path: str) -> None:
+            try:
+                safety_backup_path = restore_database(db_path, source_path)
+            except (OSError, sqlite3.Error) as exc:
+                status_text.value = f"復元に失敗しました: {exc}"
+                page.update()
+                return
+
+            status_text.value = (
+                "復元しました。反映するにはアプリを再起動してください。"
+                f"（復元前のデータは {safety_backup_path.name} として保存しています）"
+            )
+            page.update()
+
+        def confirm_restore(source_path: str) -> None:
+            def do_confirm(e: ft.Event[ft.Button]) -> None:
+                page.pop_dialog()
+                perform_restore(source_path)
+
+            def cancel(e: ft.Event[ft.TextButton]) -> None:
+                page.pop_dialog()
+
+            dialog = ft.AlertDialog(
+                modal=True,
+                title=ft.Text("復元の確認"),
+                content=ft.Text(
+                    "選択したバックアップの内容で、現在のデータをすべて上書きします。\n"
+                    "念のため、現在のデータも復元前に自動でバックアップします。\n"
+                    "復元後はアプリの再起動が必要です。よろしいですか？"
+                ),
+                actions=[
+                    ft.TextButton(content="キャンセル", on_click=cancel),
+                    ft.Button(content="復元する", on_click=do_confirm),
+                ],
+            )
+            page.show_dialog(dialog)
+
+        async def do_restore(e: ft.Event[ft.Button]) -> None:
+            files = await ft.FilePicker().pick_files(
+                dialog_title="復元するバックアップファイルを選択",
+                file_type=ft.FilePickerFileType.CUSTOM,
+                allowed_extensions=["db"],
+            )
+            if not files:
+                return  # キャンセル
+            picked_path = files[0].path
+            if not picked_path:
+                status_text.value = "選択したファイルのパスを取得できませんでした"
+                page.update()
+                return
+            confirm_restore(picked_path)
+
         return ft.Column(
             [
-                ft.Text(label, size=18, weight=ft.FontWeight.BOLD),
-                ft.Text(f"{label}の内容（準備中）"),
-            ]
+                ft.Text("バックアップ", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "取込結果や回収チェックなど、このアプリのデータをまとめて"
+                    "1つのファイルに保存・復元できます。"
+                ),
+                ft.Row([ft.Button(content="バックアップを保存", on_click=do_backup)]),
+                ft.Row([ft.Button(content="バックアップから復元", on_click=do_restore)]),
+                status_text,
+            ],
+            spacing=8,
         )
 
     # 設定タブ内の縦向きナビゲーション（NavigationRail）に並べる項目。
-    # 「項目3」はまだ実際の設定項目が決まっていないため、
-    # 器（枠組み）としてプレースホルダーを用意している。
     items: list[tuple[str, str, Callable[[], ft.Control]]] = [
         ("更新チェック", ft.Icons.SYSTEM_UPDATE_OUTLINED, build_update_check_content),
         ("防具ごとの検索初期設定", ft.Icons.TUNE_OUTLINED, build_armor_defaults_content),
-        ("項目3", ft.Icons.SETTINGS_OUTLINED, lambda: build_placeholder_content("項目3")),
+        ("バックアップ", ft.Icons.SAVE_OUTLINED, build_backup_content),
     ]
 
     def show_item(index: int) -> None:
