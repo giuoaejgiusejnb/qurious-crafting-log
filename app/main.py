@@ -9,6 +9,7 @@ from app.ui.collection_view import build_collection_view
 from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
 from app.ui.search_view import build_search_view
+from app.ui.settings_view import build_settings_view
 from app.version import APP_VERSION
 
 APP_DATA_DIR_NAME = "QuriousCraftingLog"
@@ -97,8 +98,10 @@ def main(page: ft.Page) -> None:
         page, DB_PATH, on_imported=on_imported, on_show_results=go_to_search_with_batch
     )
 
+    settings_view = build_settings_view(page, DB_PATH)
+
     tabs_control = ft.Tabs(
-        length=4,
+        length=5,
         expand=True,
         content=ft.Column(
             expand=True,
@@ -109,6 +112,7 @@ def main(page: ft.Page) -> None:
                         ft.Tab(label="検索"),
                         ft.Tab(label="履歴"),
                         ft.Tab(label="回収"),
+                        ft.Tab(label="設定"),
                     ]
                 ),
                 ft.TabBarView(
@@ -118,6 +122,7 @@ def main(page: ft.Page) -> None:
                         search_view,
                         history_view,
                         collection_view,
+                        settings_view,
                     ],
                 ),
             ],
@@ -131,7 +136,7 @@ def main(page: ft.Page) -> None:
     # （PageUp/PageDownはどのコントロールも内部で使っていないため競合しない）。
     _PAGE_KEY_STEP = 400  # PageUp/PageDownキー1回あたりのスクロール量(px)
 
-    _tab_views = [import_view, search_view, history_view, collection_view]
+    _tab_views = [import_view, search_view, history_view, collection_view, settings_view]
 
     async def scroll_active_tab(delta: float) -> None:
         active_view = _tab_views[tabs_control.selected_index]
