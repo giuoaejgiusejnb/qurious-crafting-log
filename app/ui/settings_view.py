@@ -1,11 +1,15 @@
 import sqlite3
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Callable
 
 import flet as ft
 
-from app.core.armor_defaults import ArmorSearchDefaults, get_armor_defaults, set_armor_defaults
+from app.core.armor_defaults import (
+    ArmorSearchDefaults,
+    get_armor_defaults,
+    set_armor_defaults,
+)
 from app.core.backup import backup_database, restore_database
 from app.core.equipment import list_all_equipment_options
 from app.core.search import COST_OPTIONS, DEFAULT_SORT, RESISTANCE_OPTIONS
@@ -25,7 +29,9 @@ from app.db.connection import get_connection
 _UNSELECTED = "__unselected__"
 
 
-def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Callable[[], None]]:
+def build_settings_view(
+    page: ft.Page, db_path: Path
+) -> tuple[ft.Control, Callable[[], None]]:
     """設定画面を構築する。戻り値は (画面コントロール, 表示中の項目を読み直す関数)。
 
     左側に縦向きのナビゲーション（NavigationRail）、右側に選択中の項目の
@@ -103,7 +109,9 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                 label="必要な個数（1〜4）",
                 width=160,
                 value=str(defaults.threshold),
-                options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
+                options=[
+                    ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)
+                ],
             )
             cost_min_dropdown = ft.Dropdown(
                 label="コスト以上",
@@ -176,7 +184,9 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                     page.update()
                     return
                 if min_cost > max_cost:
-                    status_text.value = "「コスト以上」は「コスト以下」より大きくできません"
+                    status_text.value = (
+                        "「コスト以上」は「コスト以下」より大きくできません"
+                    )
                     page.update()
                     return
 
@@ -200,7 +210,8 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                 new_defaults = ArmorSearchDefaults(
                     skill_set_name=(
                         skill_set_dropdown.value
-                        if skill_set_dropdown.value and skill_set_dropdown.value != _UNSELECTED
+                        if skill_set_dropdown.value
+                        and skill_set_dropdown.value != _UNSELECTED
                         else None
                     ),
                     threshold=int(threshold_dropdown.value or 1),
@@ -210,7 +221,8 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                     max_resistance=max_res,
                     has_deficiency=(
                         int(deficiency_dropdown.value)
-                        if deficiency_dropdown.value and deficiency_dropdown.value != _UNSELECTED
+                        if deficiency_dropdown.value
+                        and deficiency_dropdown.value != _UNSELECTED
                         else None
                     ),
                     sort=sort_dropdown.value or DEFAULT_SORT,
@@ -248,7 +260,9 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                     else _UNSELECTED
                 )
                 sort_dropdown.value = defaults.sort
-                status_text.value = "既定値を表示しました（保存するには「保存」を押してください）"
+                status_text.value = (
+                    "既定値を表示しました（保存するには「保存」を押してください）"
+                )
                 page.update()
 
             detail_area.content = ft.Column(
@@ -381,14 +395,16 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                     "1つのファイルに保存・復元できます。"
                 ),
                 ft.Row([ft.Button(content="バックアップを保存", on_click=do_backup)]),
-                ft.Row([ft.Button(content="バックアップから復元", on_click=do_restore)]),
+                ft.Row(
+                    [ft.Button(content="バックアップから復元", on_click=do_restore)]
+                ),
                 status_text,
             ],
             spacing=8,
         )
 
     def build_skill_color_content() -> ft.Control:
-        """検索結果・回収一覧のスキル表示色（プラス値/マイナス値）の設定。"""
+        """検索タブの検索結果一覧のスキル表示色（プラス値/マイナス値）の設定。"""
         conn = get_connection(db_path)
         try:
             positive = get_positive_skill_color(conn)
@@ -402,20 +418,28 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
             label="プラススキルの色",
             width=220,
             value=positive,
-            options=[ft.DropdownOption(key=key, text=label) for key, label in COLOR_CHOICES],
+            options=[
+                ft.DropdownOption(key=key, text=label) for key, label in COLOR_CHOICES
+            ],
         )
         negative_dropdown = ft.Dropdown(
             label="マイナススキルの色",
             width=220,
             value=negative,
-            options=[ft.DropdownOption(key=key, text=label) for key, label in COLOR_CHOICES],
+            options=[
+                ft.DropdownOption(key=key, text=label) for key, label in COLOR_CHOICES
+            ],
         )
 
         def do_save(e: ft.Event[ft.Button]) -> None:
             conn = get_connection(db_path)
             try:
-                set_positive_skill_color(conn, positive_dropdown.value or DEFAULT_POSITIVE_COLOR)
-                set_negative_skill_color(conn, negative_dropdown.value or DEFAULT_NEGATIVE_COLOR)
+                set_positive_skill_color(
+                    conn, positive_dropdown.value or DEFAULT_POSITIVE_COLOR
+                )
+                set_negative_skill_color(
+                    conn, negative_dropdown.value or DEFAULT_NEGATIVE_COLOR
+                )
             finally:
                 conn.close()
             status_text.value = "保存しました"
@@ -425,8 +449,14 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
             [
                 ft.Text("スキル表示色", size=18, weight=ft.FontWeight.BOLD),
                 ft.Text(
-                    "検索結果一覧・回収確認パネルのスキル欄で、値がプラス/マイナスの"
-                    "スキルにそれぞれ使う色を選べます。"
+                    "検索タブの検索結果一覧のスキル欄で、値がプラス/マイナスの"
+                    "スキルにそれぞれ使う色を選べます"
+                ),
+                ft.Text(
+                    "※ 既に検索タブに結果が表示されている状態で色を変更しても、"
+                    "その画面はすぐには変わりません。もう一度検索すると新しい色で表示されます。",
+                    size=12,
+                    italic=True,
                 ),
                 ft.Row([positive_dropdown]),
                 ft.Row([negative_dropdown]),
@@ -439,7 +469,11 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
     # 設定タブ内の縦向きナビゲーション（NavigationRail）に並べる項目。
     items: list[tuple[str, str, Callable[[], ft.Control]]] = [
         ("更新チェック", ft.Icons.SYSTEM_UPDATE_OUTLINED, build_update_check_content),
-        ("防具ごとの検索初期設定", ft.Icons.TUNE_OUTLINED, build_armor_defaults_content),
+        (
+            "防具ごとの検索初期設定",
+            ft.Icons.TUNE_OUTLINED,
+            build_armor_defaults_content,
+        ),
         ("スキル表示色", ft.Icons.PALETTE_OUTLINED, build_skill_color_content),
         ("バックアップ", ft.Icons.SAVE_OUTLINED, build_backup_content),
     ]
@@ -457,7 +491,8 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
         label_type=ft.NavigationRailLabelType.ALL,
         min_width=100,
         destinations=[
-            ft.NavigationRailDestination(icon=icon, label=label) for label, icon, _build in items
+            ft.NavigationRailDestination(icon=icon, label=label)
+            for label, icon, _build in items
         ],
         on_change=on_rail_change,
     )
