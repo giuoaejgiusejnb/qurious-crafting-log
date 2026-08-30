@@ -9,7 +9,6 @@ from app.core.collection import (
     set_collected,
 )
 from app.core.search import fetch_skill_breakdown
-from app.core.skill_colors import get_negative_skill_color, get_positive_skill_color
 from app.db.connection import get_connection
 from app.ui.skills_display import build_skills_wrap
 
@@ -64,8 +63,6 @@ def build_collection_panel(
         try:
             rows = fetch_collected_in_batch(conn, batch_id)
             breakdown = fetch_skill_breakdown(conn, [r.id for r in rows])
-            positive_color = get_positive_skill_color(conn)
-            negative_color = get_negative_skill_color(conn)
         finally:
             conn.close()
 
@@ -105,10 +102,7 @@ def build_collection_panel(
                                 size=12,
                             ),
                             build_skills_wrap(
-                                breakdown.get(row.id, []),
-                                width=_SKILLS_WRAP_WIDTH,
-                                positive_color=positive_color,
-                                negative_color=negative_color,
+                                breakdown.get(row.id, []), width=_SKILLS_WRAP_WIDTH
                             ),
                         ],
                         spacing=2,
