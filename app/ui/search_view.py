@@ -487,9 +487,11 @@ def build_search_view(
                     spacing=0,
                 )
             )
-        return ft.Row(entries)
+        return ft.Row(entries, wrap=True, spacing=4, run_spacing=4)
 
-    saved_sets_list_container = ft.Container()
+    # wrap=Trueの折り返し判定に必要な幅を明示的に与える
+    # （ダイアログのcontentカラムのwidth=760から、内側の余白分を差し引いた値）。
+    saved_sets_list_container = ft.Container(width=720)
 
     def refresh_saved_sets_list() -> None:
         saved_sets_list_container.content = build_saved_sets_list()
