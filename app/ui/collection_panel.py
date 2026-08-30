@@ -27,6 +27,7 @@ def build_collection_panel(
     """
     status_text = ft.Text()
     results_list = ft.Column(spacing=2)
+    current_batch_id: int | None = None
 
     def make_collected_checkbox(result_id: int, batch_id: int) -> ft.Checkbox:
         checkbox = ft.Checkbox(value=True)
@@ -55,6 +56,9 @@ def build_collection_panel(
         return checkbox
 
     def render_batch(batch_id: int) -> None:
+        nonlocal current_batch_id
+        current_batch_id = batch_id
+
         conn = get_connection(db_path)
         try:
             rows = fetch_collected_in_batch(conn, batch_id)
@@ -116,6 +120,42 @@ def build_collection_panel(
         panel.visible = False
         page.update()
 
+    def clear_all_collected() -> None:
+        if current_batch_id is None:
+            return
+        conn = get_connection(db_path)
+        try:
+            rows = fetch_collected_in_batch(conn, current_batch_id)
+            for row in rows:
+                set_collected(conn, row.id, current_batch_id, False)
+        finally:
+            conn.close()
+        render_batch(current_batch_id)
+
+    def confirm_clear_all(e: ft.Event[ft.TextButton]) -> None:
+        if current_batch_id is None:
+            return
+
+        def do_clear(e: ft.Event[ft.Button]) -> None:
+            page.pop_dialog()
+            clear_all_collected()
+
+        def cancel_clear(e: ft.Event[ft.TextButton]) -> None:
+            page.pop_dialog()
+
+        confirm_dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("全解除の確認"),
+            content=ft.Text(
+                f"バッチ #{current_batch_id} の回収チェックをすべて解除しますか？"
+            ),
+            actions=[
+                ft.TextButton(content="キャンセル", on_click=cancel_clear),
+                ft.Button(content="解除する", on_click=do_clear),
+            ],
+        )
+        page.show_dialog(confirm_dialog)
+
     def open_panel(batch_id: int) -> None:
         panel.visible = True
         render_batch(batch_id)
@@ -129,6 +169,11 @@ def build_collection_panel(
                         ft.IconButton(
                             icon=ft.Icons.CLOSE, tooltip="閉じる", on_click=close_panel
                         ),
+                    ]
+                ),
+                ft.Row(
+                    [
+                        ft.TextButton(content="このバッチの回収を全解除", on_click=confirm_clear_all),
                     ]
                 ),
                 status_text,
