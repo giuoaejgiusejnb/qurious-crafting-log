@@ -6,6 +6,7 @@ import flet as ft
 
 from app.core.update_check import RELEASE_PAGE_URL, fetch_latest_release_tag, is_update_available
 from app.ui.collection_view import build_collection_view
+from app.ui.contact_view import build_contact_view
 from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
 from app.ui.search_view import build_search_view
@@ -135,9 +136,10 @@ def main(page: ft.Page) -> None:
     )
 
     settings_view = build_settings_view(page, DB_PATH)
+    contact_view = build_contact_view(page, DB_PATH)
 
     tabs_control = ft.Tabs(
-        length=5,
+        length=6,
         expand=True,
         content=ft.Column(
             expand=True,
@@ -149,6 +151,7 @@ def main(page: ft.Page) -> None:
                         ft.Tab(label="履歴"),
                         ft.Tab(label="回収"),
                         ft.Tab(label="設定"),
+                        ft.Tab(label="お問い合わせ"),
                     ]
                 ),
                 ft.TabBarView(
@@ -159,6 +162,7 @@ def main(page: ft.Page) -> None:
                         history_view,
                         collection_view,
                         settings_view,
+                        contact_view,
                     ],
                 ),
             ],
@@ -172,7 +176,14 @@ def main(page: ft.Page) -> None:
     # （PageUp/PageDownはどのコントロールも内部で使っていないため競合しない）。
     _PAGE_KEY_STEP = 400  # PageUp/PageDownキー1回あたりのスクロール量(px)
 
-    _tab_views = [import_view, search_view, history_view, collection_view, settings_view]
+    _tab_views = [
+        import_view,
+        search_view,
+        history_view,
+        collection_view,
+        settings_view,
+        contact_view,
+    ]
 
     async def scroll_active_tab(delta: float) -> None:
         active_view = _tab_views[tabs_control.selected_index]
