@@ -24,6 +24,7 @@ class SearchParams:
     label: str | None = None
     min_total_cost: int | None = None
     max_total_cost: int | None = None
+    has_deficiency: int | None = None  # 0=無いもののみ, 1=有るもののみ, None=絞り込みなし
     sort: str = DEFAULT_SORT
     limit: int = 200
     offset: int = 0
@@ -114,6 +115,9 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
     if params.max_total_cost is not None:
         query += " AND r.total_cost <= ?"
         query_args.append(params.max_total_cost)
+    if params.has_deficiency is not None:
+        query += " AND r.has_deficiency = ?"
+        query_args.append(params.has_deficiency)
 
     query += f" ORDER BY {SORT_OPTIONS[params.sort]} LIMIT ? OFFSET ?"
     query_args.append(params.limit)

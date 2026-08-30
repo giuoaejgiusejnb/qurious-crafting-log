@@ -642,6 +642,17 @@ def build_search_view(
         options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
     )
 
+    deficiency_dropdown = ft.Dropdown(
+        label="スキル欠けの有無",
+        width=160,
+        value=_UNSELECTED,
+        options=[
+            ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+            ft.DropdownOption(key="1", text="有"),
+            ft.DropdownOption(key="0", text="無"),
+        ],
+    )
+
     # --- 検索条件（コスト/防具/スキル）の折りたたみ ---
     condition_section = ft.Column(
         [
@@ -660,7 +671,8 @@ def build_search_view(
                     select_skill_button,
                 ]
             ),
-            ft.Text("スキル欠けの有無"),
+            ft.Text("・スキル欠け", weight=ft.FontWeight.BOLD),
+            ft.Row([deficiency_dropdown]),
         ],
         spacing=6,
         visible=False,
@@ -743,6 +755,9 @@ def build_search_view(
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
+                # TODO: スキル欠けフィルタの動作確認用に一時的に表示している列。
+                # 確認が済んだら削除する。
+                ft.Text("スキル欠け", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("バッチ", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
                 ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
@@ -762,6 +777,8 @@ def build_search_view(
                             build_skills_wrap(breakdown.get(row.id, [])),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
+                            # TODO: 上のヘッダー同様、動作確認用の一時的な列
+                            ft.Text("有" if row.has_deficiency else "無", width=80),
                             ft.Text(str(row.batch_id), width=60),
                             ft.Text(row.imported_at, width=160),
                             make_collected_checkbox(
@@ -838,6 +855,11 @@ def build_search_view(
             ),
             min_total_cost=min_total_cost,
             max_total_cost=max_total_cost,
+            has_deficiency=(
+                int(deficiency_dropdown.value)
+                if deficiency_dropdown.value and deficiency_dropdown.value != _UNSELECTED
+                else None
+            ),
             # 1件多く取得し、201件目があれば「次へ」を有効にする（COUNT(*)を避けるため）
             limit=_PAGE_SIZE + 1,
             offset=offset,
@@ -901,6 +923,7 @@ def build_search_view(
         cost_min_dropdown.value = _DEFAULT_COST_MIN
         cost_max_dropdown.value = _DEFAULT_COST_MAX
         label_dropdown.value = _UNSELECTED
+        deficiency_dropdown.value = _UNSELECTED
         threshold_dropdown.value = "1"
         sort_dropdown.value = DEFAULT_SORT
         date_from_dropdown.value = _UNSELECTED

@@ -205,6 +205,22 @@ def test_search_filters_by_cost_range(conn):
     assert [r.total_cost for r in rows] == [500]
 
 
+def test_search_filters_by_has_deficiency(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=1, deficiency="無", skills=[("攻撃", 2)]),
+            build_row(zeny_count=2, deficiency="有", skills=[("攻撃", 2)]),
+        ]
+    )
+    import_block(conn, text)
+
+    params_no = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, has_deficiency=0)
+    params_yes = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, has_deficiency=1)
+
+    assert [r.zeny_count for r in search_results(conn, params_no)] == [1]
+    assert [r.zeny_count for r in search_results(conn, params_yes)] == [2]
+
+
 def test_search_filters_by_date_range(conn):
     summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 2)]))
     conn.execute(
