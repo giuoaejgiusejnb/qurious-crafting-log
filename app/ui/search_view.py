@@ -164,11 +164,15 @@ def build_search_view(
         ]
         selected_summary_container.content = ft.Column(rows, spacing=4)
 
-    def on_skill_checkbox_change(e: ft.Event[ft.Checkbox]) -> None:
+    def mark_manual_selection_change() -> None:
+        """スキル選択が手動で変わったときの共通処理（個別チェックボックス・一括選択/クリア共通）。"""
         nonlocal current_skill_set_name
         current_skill_set_name = None  # 手動変更したので保存済み集合との対応は外れる
         update_selected_summary()
         refresh_current_set_dropdown()
+
+    def on_skill_checkbox_change(e: ft.Event[ft.Checkbox]) -> None:
+        mark_manual_selection_change()
         page.update()
 
     def build_checkbox_rows(
@@ -186,6 +190,33 @@ def build_search_view(
         ]
         return ft.Column(rows, spacing=2)
 
+    def select_all_in_group(names: list[str]) -> None:
+        for name in names:
+            skill_checkboxes[name].value = True
+        mark_manual_selection_change()
+        page.update()
+
+    def clear_all_in_group(names: list[str]) -> None:
+        for name in names:
+            skill_checkboxes[name].value = False
+        mark_manual_selection_change()
+        page.update()
+
+    def build_group_header(title: str, names: list[str]) -> ft.Control:
+        return ft.Row(
+            [
+                ft.Text(title, weight=ft.FontWeight.BOLD),
+                ft.TextButton(
+                    content="すべて選択",
+                    on_click=lambda e, ns=names: select_all_in_group(ns),
+                ),
+                ft.TextButton(
+                    content="すべてクリア",
+                    on_click=lambda e, ns=names: clear_all_in_group(ns),
+                ),
+            ]
+        )
+
     def build_skill_checklist() -> ft.Control:
         # 再構築のたびにチェックボックスは作り直すが、既存の選択状態は引き継ぐ
         previously_selected = {
@@ -195,15 +226,13 @@ def build_search_view(
         sections: list[ft.Control] = []
 
         for cost, names in SKILL_MASTER:
-            sections.append(ft.Text(f"コスト{cost}", weight=ft.FontWeight.BOLD))
+            sections.append(build_group_header(f"コスト{cost}", names))
             sections.append(build_checkbox_rows(names, previously_selected))
 
         registered_names = set(_load_skill_names(db_path))
         extra_names = sorted(registered_names - ALL_MASTER_SKILL_NAMES)
         if extra_names:
-            sections.append(
-                ft.Text("その他（マスター未登録）", weight=ft.FontWeight.BOLD)
-            )
+            sections.append(build_group_header("その他（マスター未登録）", extra_names))
             sections.append(build_checkbox_rows(extra_names, previously_selected))
 
         return ft.Column(sections, spacing=8)
@@ -314,11 +343,11 @@ def build_search_view(
         save_set_status_text.value = ""
         dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text("検索するスキル集合を選択"),
+            title=ft.Text("検索するスキル集合を作成"),
             content=build_dialog_content(),
             actions=[
                 ft.TextButton(content="選択をクリア", on_click=clear_skill_selection),
-                ft.Button(content="閉じる", on_click=close_skill_dialog),
+                ft.Button(content="保存せずに閉じる", on_click=close_skill_dialog),
             ],
         )
         page.show_dialog(dialog)
@@ -434,9 +463,9 @@ def build_search_view(
         if not names:
             return ft.Text("保存済みのスキル集合はまだありません", italic=True)
 
-        rows: list[ft.Control] = []
+        entries: list[ft.Control] = []
         for name in names:
-            rows.append(
+            entries.append(
                 ft.Row(
                     [
                         ft.TextButton(
@@ -458,7 +487,7 @@ def build_search_view(
                     spacing=0,
                 )
             )
-        return ft.Column(rows, spacing=0)
+        return ft.Row(entries, wrap=True, spacing=4, run_spacing=4)
 
     saved_sets_list_container = ft.Container()
 
@@ -466,6 +495,14 @@ def build_search_view(
         saved_sets_list_container.content = build_saved_sets_list()
 
     refresh_saved_sets_list()
+
+    # skill_checkboxesは、従来は「スキル集合を作成」ダイアログを開いたときに
+    # build_skill_checklist()経由で初めて作られていた。しかしskill_checkboxesは
+    # 検索実行時の選択スキル一覧や「現在の選択内容を見る」ダイアログでも参照するため、
+    # ダイアログを一度も開いていない状態（例: スキル集合ドロップダウンで直接選んだ
+    # だけの場合）だと選択が空として扱われてしまう不具合があった。ここで一度呼んで
+    # 初期化しておく（戻り値のColumnはダイアログ内でのみ使うためここでは捨てる）。
+    build_skill_checklist()
 
     update_selected_summary()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
     refresh_current_set_dropdown()  # 同上
@@ -606,11 +643,11 @@ def build_search_view(
     # --- 検索条件（コスト/防具/スキル）の折りたたみ ---
     condition_section = ft.Column(
         [
-            ft.Text("コスト", weight=ft.FontWeight.BOLD),
+            ft.Text("・コスト", weight=ft.FontWeight.BOLD),
             ft.Row([cost_min_dropdown, cost_max_dropdown]),
-            ft.Text("防具", weight=ft.FontWeight.BOLD),
+            ft.Text("・防具", weight=ft.FontWeight.BOLD),
             ft.Row([label_dropdown]),
-            ft.Text("スキル", weight=ft.FontWeight.BOLD),
+            ft.Text("・スキル", weight=ft.FontWeight.BOLD),
             ft.Row(
                 [
                     current_set_dropdown,
