@@ -3,12 +3,7 @@ from typing import Callable
 
 import flet as ft
 
-from app.core.armor_defaults import (
-    ArmorSearchDefaults,
-    get_armor_defaults,
-    reset_armor_defaults,
-    set_armor_defaults,
-)
+from app.core.armor_defaults import ArmorSearchDefaults, get_armor_defaults, set_armor_defaults
 from app.core.equipment import list_all_equipment_options
 from app.core.search import COST_OPTIONS, DEFAULT_SORT, RESISTANCE_OPTIONS
 from app.core.skill_sets import list_skill_set_names
@@ -196,7 +191,7 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                         if skill_set_dropdown.value and skill_set_dropdown.value != _UNSELECTED
                         else None
                     ),
-                    threshold=int(threshold_dropdown.value or 2),
+                    threshold=int(threshold_dropdown.value or 1),
                     min_total_cost=min_cost,
                     max_total_cost=max_cost,
                     min_resistance=min_res,
@@ -217,13 +212,31 @@ def build_settings_view(page: ft.Page, db_path: Path) -> tuple[ft.Control, Calla
                 page.update()
 
             def do_reset(e: ft.Event[ft.TextButton]) -> None:
-                conn = get_connection(db_path)
-                try:
-                    reset_armor_defaults(conn, armor_name)
-                finally:
-                    conn.close()
-                status_text.value = f"「{armor_name}」の初期設定を既定値に戻しました"
-                load_armor_detail(armor_name)  # 表示も既定値に戻す
+                # 画面表示のみを既定値に戻す（保存はしない）。他の項目と同様、
+                # 確定するには「保存」を押す必要がある
+                # （誤操作で保存済みの設定が即座に消えてしまわないようにするため）。
+                defaults = ArmorSearchDefaults()
+                skill_set_dropdown.value = defaults.skill_set_name or _UNSELECTED
+                threshold_dropdown.value = str(defaults.threshold)
+                cost_min_dropdown.value = str(defaults.min_total_cost)
+                cost_max_dropdown.value = str(defaults.max_total_cost)
+                resistance_min_dropdown.value = (
+                    str(defaults.min_resistance)
+                    if defaults.min_resistance is not None
+                    else _UNSELECTED
+                )
+                resistance_max_dropdown.value = (
+                    str(defaults.max_resistance)
+                    if defaults.max_resistance is not None
+                    else _UNSELECTED
+                )
+                deficiency_dropdown.value = (
+                    str(defaults.has_deficiency)
+                    if defaults.has_deficiency is not None
+                    else _UNSELECTED
+                )
+                sort_dropdown.value = defaults.sort
+                status_text.value = "既定値を表示しました（保存するには「保存」を押してください）"
                 page.update()
 
             detail_area.content = ft.Column(

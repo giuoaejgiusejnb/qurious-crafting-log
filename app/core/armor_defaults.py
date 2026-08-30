@@ -20,7 +20,7 @@ class ArmorSearchDefaults:
     """
 
     skill_set_name: str | None = None
-    threshold: int = 2
+    threshold: int = 1  # 検索タブ自体の初期値（1）と合わせる
     min_total_cost: int = 3
     max_total_cost: int = 42
     min_resistance: int | None = None
