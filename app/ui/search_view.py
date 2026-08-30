@@ -28,6 +28,12 @@ from app.ui.skills_display import build_skills_wrap
 
 _SKILLS_PER_ROW = 5
 _SUMMARY_CHIPS_PER_ROW = 8
+_SAVED_SETS_PER_ROW = 3
+# 名前が極端に長くても詳細/削除ボタンが画面外に押し出されないよう、
+# 名前部分の表示幅を固定し、それより長い名前は省略記号で切り詰める。
+# 1エントリはボタンの内側余白・アイコン2つ分を含めると名前の表示幅より
+# だいぶ広くなるため、ダイアログの幅（760px）に収まるよう余裕を持たせている。
+_SAVED_SET_NAME_WIDTH = 100
 _UNSELECTED = "__unselected__"
 # 保存済み集合と一致しない、チェックボックスでの手動選択中であることを示す
 # ドロップダウンの表示専用オプション（選んでも何も起きない）。
@@ -403,16 +409,34 @@ def build_search_view(
         save_set_status_text.value = f"「{name}」を選択中のスキルに反映しました"
         page.update()
 
-    def open_skill_set_detail(name: str) -> None:
+    def load_named_skill_set_into_checklist(name: str) -> None:
+        """「保存済みのスキル集合」一覧でのクリック時に呼ばれる。
+
+        チェックボックスには内容を反映するが、検索に使うスキル集合
+        （current_set_dropdownの選択）は変更しない。一覧をクリックする
+        操作はプレビュー/編集目的であり、「このスキル集合を検索に使う」という
+        意思表示ではないため（検索に使うには、ドロップダウンで選ぶか、
+        詳細ダイアログの「このスキル集合を使う」を押す）。
+        """
         conn = get_connection(db_path)
         try:
             names = get_skill_set(conn, name) or []
         finally:
             conn.close()
 
-        def use_this_set(e: ft.Event[ft.Button]) -> None:
-            page.pop_dialog()
-            apply_named_skill_set(name)
+        names_set = set(names)
+        for skill_name, checkbox in skill_checkboxes.items():
+            checkbox.value = skill_name in names_set
+        mark_manual_selection_change()  # 手動選択扱いにする（current_skill_set_nameはNoneに戻る）
+        save_set_status_text.value = f"「{name}」の内容をチェックボックスに読み込みました"
+        page.update()
+
+    def open_skill_set_detail(name: str) -> None:
+        conn = get_connection(db_path)
+        try:
+            names = get_skill_set(conn, name) or []
+        finally:
+            conn.close()
 
         def close_detail(e: ft.Event[ft.TextButton]) -> None:
             page.pop_dialog()
@@ -425,7 +449,6 @@ def build_search_view(
             ),
             actions=[
                 ft.TextButton(content="閉じる", on_click=close_detail),
-                ft.Button(content="このスキル集合を使う", on_click=use_this_set),
             ],
         )
         page.show_dialog(detail_dialog)
@@ -490,8 +513,14 @@ def build_search_view(
                 ft.Row(
                     [
                         ft.TextButton(
-                            content=name,
-                            on_click=lambda e, n=name: apply_named_skill_set(n),
+                            content=ft.Text(
+                                name,
+                                width=_SAVED_SET_NAME_WIDTH,
+                                max_lines=1,
+                                overflow=ft.TextOverflow.ELLIPSIS,
+                            ),
+                            tooltip=name,  # 省略されても元の名前が分かるように
+                            on_click=lambda e, n=name: load_named_skill_set_into_checklist(n),
                         ),
                         ft.IconButton(
                             icon=ft.Icons.INFO_OUTLINE,
@@ -508,11 +537,15 @@ def build_search_view(
                     spacing=0,
                 )
             )
-        return ft.Row(entries, wrap=True, spacing=4, run_spacing=4)
+        # wrap=Trueは折り返し判定に親からの幅の伝播が必要で不安定だったため、
+        # スキルチェックボックスの並びなどと同じ「固定数ごとに手動で行分割」方式にする。
+        rows: list[ft.Control] = [
+            ft.Row(entries[i : i + _SAVED_SETS_PER_ROW], spacing=8)
+            for i in range(0, len(entries), _SAVED_SETS_PER_ROW)
+        ]
+        return ft.Column(rows, spacing=4)
 
-    # wrap=Trueの折り返し判定に必要な幅を明示的に与える
-    # （ダイアログのcontentカラムのwidth=760から、内側の余白分を差し引いた値）。
-    saved_sets_list_container = ft.Container(width=720)
+    saved_sets_list_container = ft.Container()
 
     def refresh_saved_sets_list() -> None:
         saved_sets_list_container.content = build_saved_sets_list()
