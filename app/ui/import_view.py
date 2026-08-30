@@ -3,6 +3,7 @@ from typing import Callable
 
 import flet as ft
 
+from app.core.armor_defaults import reset_armor_defaults
 from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS
 from app.core.importer import import_block
 from app.core.settings import get_json_setting, get_setting, set_json_setting, set_setting
@@ -64,6 +65,8 @@ def build_import_view(
         conn = get_connection(db_path)
         try:
             set_json_setting(conn, CUSTOM_OPTIONS_KEY, custom_only)
+            # 削除した防具に対する検索初期設定（設定タブ）が孤立して残らないようにする
+            reset_armor_defaults(conn, name)
         finally:
             conn.close()
 
