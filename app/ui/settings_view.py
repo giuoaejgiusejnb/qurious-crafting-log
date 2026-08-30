@@ -3,8 +3,19 @@ from typing import Callable
 
 import flet as ft
 
+from app.core.armor_defaults import (
+    ArmorSearchDefaults,
+    get_armor_defaults,
+    reset_armor_defaults,
+    set_armor_defaults,
+)
+from app.core.equipment import list_all_equipment_options
+from app.core.search import COST_OPTIONS, DEFAULT_SORT, RESISTANCE_OPTIONS
+from app.core.skill_sets import list_skill_set_names
 from app.core.update_check import is_update_check_enabled, set_update_check_enabled
 from app.db.connection import get_connection
+
+_UNSELECTED = "__unselected__"
 
 
 def build_settings_view(page: ft.Page, db_path: Path) -> ft.Control:
@@ -41,6 +52,225 @@ def build_settings_view(page: ft.Page, db_path: Path) -> ft.Control:
             ]
         )
 
+    def build_armor_defaults_content() -> ft.Control:
+        """防具ごとの検索初期設定。
+
+        取込タブでの取込完了後、検索タブへ自動遷移する際に使われる初期条件を
+        防具ごとに登録できるようにする（履歴タブからの遷移では使われず、
+        従来通り全条件がリセットされる）。
+        """
+        conn = get_connection(db_path)
+        try:
+            armor_options = list_all_equipment_options(conn)
+        finally:
+            conn.close()
+
+        status_text = ft.Text(size=12)
+        detail_area = ft.Container()
+
+        armor_dropdown = ft.Dropdown(
+            label="防具",
+            width=220,
+            value=armor_options[0] if armor_options else None,
+            options=[ft.DropdownOption(key=a, text=a) for a in armor_options],
+        )
+
+        def load_armor_detail(armor_name: str) -> None:
+            conn = get_connection(db_path)
+            try:
+                defaults = get_armor_defaults(conn, armor_name)
+                skill_set_names = list_skill_set_names(conn)
+            finally:
+                conn.close()
+
+            skill_set_dropdown = ft.Dropdown(
+                label="スキル集合",
+                width=220,
+                value=defaults.skill_set_name or _UNSELECTED,
+                options=[
+                    ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+                    *[ft.DropdownOption(key=n, text=n) for n in skill_set_names],
+                ],
+            )
+            threshold_dropdown = ft.Dropdown(
+                label="必要な個数（1〜4）",
+                width=160,
+                value=str(defaults.threshold),
+                options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
+            )
+            cost_min_dropdown = ft.Dropdown(
+                label="コスト以上",
+                width=140,
+                value=str(defaults.min_total_cost),
+                options=[ft.DropdownOption(key=n, text=n) for n in COST_OPTIONS],
+            )
+            cost_max_dropdown = ft.Dropdown(
+                label="コスト以下",
+                width=140,
+                value=str(defaults.max_total_cost),
+                options=[ft.DropdownOption(key=n, text=n) for n in COST_OPTIONS],
+            )
+            resistance_min_dropdown = ft.Dropdown(
+                label="耐性以上",
+                width=140,
+                value=(
+                    str(defaults.min_resistance)
+                    if defaults.min_resistance is not None
+                    else _UNSELECTED
+                ),
+                options=[
+                    ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+                    *[ft.DropdownOption(key=n, text=n) for n in RESISTANCE_OPTIONS],
+                ],
+            )
+            resistance_max_dropdown = ft.Dropdown(
+                label="耐性以下",
+                width=140,
+                value=(
+                    str(defaults.max_resistance)
+                    if defaults.max_resistance is not None
+                    else _UNSELECTED
+                ),
+                options=[
+                    ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+                    *[ft.DropdownOption(key=n, text=n) for n in RESISTANCE_OPTIONS],
+                ],
+            )
+            deficiency_dropdown = ft.Dropdown(
+                label="スキル欠けの有無",
+                width=160,
+                value=(
+                    str(defaults.has_deficiency)
+                    if defaults.has_deficiency is not None
+                    else _UNSELECTED
+                ),
+                options=[
+                    ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+                    ft.DropdownOption(key="1", text="有"),
+                    ft.DropdownOption(key="0", text="無"),
+                ],
+            )
+            sort_dropdown = ft.Dropdown(
+                label="並び替え",
+                width=220,
+                value=defaults.sort,
+                options=[
+                    ft.DropdownOption(key="craft_order", text="練成順"),
+                    ft.DropdownOption(key="total_cost_desc", text="コスト（降順）"),
+                ],
+            )
+
+            def do_save(e: ft.Event[ft.Button]) -> None:
+                try:
+                    min_cost = int(cost_min_dropdown.value)
+                    max_cost = int(cost_max_dropdown.value)
+                except (TypeError, ValueError):
+                    status_text.value = "コストの指定が不正です"
+                    page.update()
+                    return
+                if min_cost > max_cost:
+                    status_text.value = "「コスト以上」は「コスト以下」より大きくできません"
+                    page.update()
+                    return
+
+                min_res = (
+                    int(resistance_min_dropdown.value)
+                    if resistance_min_dropdown.value
+                    and resistance_min_dropdown.value != _UNSELECTED
+                    else None
+                )
+                max_res = (
+                    int(resistance_max_dropdown.value)
+                    if resistance_max_dropdown.value
+                    and resistance_max_dropdown.value != _UNSELECTED
+                    else None
+                )
+                if min_res is not None and max_res is not None and min_res > max_res:
+                    status_text.value = "「耐性以上」は「耐性以下」より大きくできません"
+                    page.update()
+                    return
+
+                new_defaults = ArmorSearchDefaults(
+                    skill_set_name=(
+                        skill_set_dropdown.value
+                        if skill_set_dropdown.value and skill_set_dropdown.value != _UNSELECTED
+                        else None
+                    ),
+                    threshold=int(threshold_dropdown.value or 2),
+                    min_total_cost=min_cost,
+                    max_total_cost=max_cost,
+                    min_resistance=min_res,
+                    max_resistance=max_res,
+                    has_deficiency=(
+                        int(deficiency_dropdown.value)
+                        if deficiency_dropdown.value and deficiency_dropdown.value != _UNSELECTED
+                        else None
+                    ),
+                    sort=sort_dropdown.value or DEFAULT_SORT,
+                )
+                conn = get_connection(db_path)
+                try:
+                    set_armor_defaults(conn, armor_name, new_defaults)
+                finally:
+                    conn.close()
+                status_text.value = f"「{armor_name}」の初期設定を保存しました"
+                page.update()
+
+            def do_reset(e: ft.Event[ft.TextButton]) -> None:
+                conn = get_connection(db_path)
+                try:
+                    reset_armor_defaults(conn, armor_name)
+                finally:
+                    conn.close()
+                status_text.value = f"「{armor_name}」の初期設定を既定値に戻しました"
+                load_armor_detail(armor_name)  # 表示も既定値に戻す
+                page.update()
+
+            detail_area.content = ft.Column(
+                [
+                    ft.Row([skill_set_dropdown, threshold_dropdown]),
+                    ft.Row([cost_min_dropdown, cost_max_dropdown]),
+                    ft.Row([resistance_min_dropdown, resistance_max_dropdown]),
+                    ft.Row([deficiency_dropdown]),
+                    ft.Row([sort_dropdown]),
+                    ft.Row(
+                        [
+                            ft.Button(content="保存", on_click=do_save),
+                            ft.TextButton(content="既定値に戻す", on_click=do_reset),
+                        ]
+                    ),
+                ],
+                spacing=8,
+            )
+
+        def on_armor_select(e: ft.Event[ft.Dropdown]) -> None:
+            status_text.value = ""
+            if armor_dropdown.value:
+                load_armor_detail(armor_dropdown.value)
+            page.update()
+
+        armor_dropdown.on_select = on_armor_select
+
+        if armor_options:
+            load_armor_detail(armor_options[0])
+
+        return ft.Column(
+            [
+                ft.Text("防具ごとの検索初期設定", size=18, weight=ft.FontWeight.BOLD),
+                ft.Text(
+                    "取込タブから検索タブへ自動的に移動するときに使う初期条件を、"
+                    "防具ごとに登録できます（履歴タブからの移動では使われません。"
+                    "そちらは常に全条件がリセットされます）。"
+                ),
+                armor_dropdown,
+                status_text,
+                detail_area,
+            ],
+            spacing=8,
+            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+        )
+
     def build_placeholder_content(label: str) -> ft.Control:
         return ft.Column(
             [
@@ -50,11 +280,11 @@ def build_settings_view(page: ft.Page, db_path: Path) -> ft.Control:
         )
 
     # 設定タブ内の縦向きナビゲーション（NavigationRail）に並べる項目。
-    # 「更新チェック」以外はまだ実際の設定項目が決まっていないため、
+    # 「項目3」はまだ実際の設定項目が決まっていないため、
     # 器（枠組み）としてプレースホルダーを用意している。
     items: list[tuple[str, str, Callable[[], ft.Control]]] = [
         ("更新チェック", ft.Icons.SYSTEM_UPDATE_OUTLINED, build_update_check_content),
-        ("項目2", ft.Icons.SETTINGS_OUTLINED, lambda: build_placeholder_content("項目2")),
+        ("防具ごとの検索初期設定", ft.Icons.TUNE_OUTLINED, build_armor_defaults_content),
         ("項目3", ft.Icons.SETTINGS_OUTLINED, lambda: build_placeholder_content("項目3")),
     ]
 

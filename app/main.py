@@ -4,6 +4,7 @@ from pathlib import Path
 
 import flet as ft
 
+from app.core.armor_defaults import get_armor_defaults
 from app.core.update_check import (
     RELEASE_PAGE_URL,
     fetch_latest_release_tag,
@@ -90,9 +91,27 @@ def main(page: ft.Page) -> None:
     SEARCH_TAB_INDEX = 1
 
     def go_to_search_with_batch(batch_id: int) -> None:
-        """取込タブ・履歴タブから呼ばれ、検索タブへ切り替えて指定バッチを対象に検索する。"""
+        """履歴タブから呼ばれ、検索タブへ切り替えて指定バッチを対象に検索する。
+
+        条件は常にすべてリセットされる（防具ごとの検索初期設定は適用しない）。
+        """
         tabs_control.selected_index = SEARCH_TAB_INDEX
         select_search_batch(batch_id)
+
+    def go_to_search_after_import(batch_id: int, armor_label: str | None) -> None:
+        """取込タブから呼ばれ、検索タブへ切り替えて指定バッチを対象に検索する。
+
+        armor_labelに対応する防具ごとの検索初期設定（設定タブ）があれば適用する。
+        """
+        tabs_control.selected_index = SEARCH_TAB_INDEX
+        defaults = None
+        if armor_label:
+            conn = get_connection(DB_PATH)
+            try:
+                defaults = get_armor_defaults(conn, armor_label)
+            finally:
+                conn.close()
+        select_search_batch(batch_id, defaults)
 
     def on_batch_deleted() -> None:
         """履歴タブでのバッチ削除時に外部から呼ばれる。バッチ一覧を最新化し、
@@ -114,7 +133,7 @@ def main(page: ft.Page) -> None:
         refresh_history_batches()
 
     import_view = build_import_view(
-        page, DB_PATH, on_imported=on_imported, on_show_results=go_to_search_with_batch
+        page, DB_PATH, on_imported=on_imported, on_show_results=go_to_search_after_import
     )
 
     settings_view = build_settings_view(page, DB_PATH)

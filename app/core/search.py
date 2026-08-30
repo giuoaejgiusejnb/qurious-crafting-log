@@ -13,6 +13,11 @@ SORT_OPTIONS: dict[str, str] = {
 }
 DEFAULT_SORT = "craft_order"
 
+# 検索UIのコスト/耐性ドロップダウンの選択肢。設定タブ（防具ごとの初期設定）
+# でも同じ選択肢を使うため、ここに集約する。
+COST_OPTIONS = [str(n) for n in range(3, 43, 3)]
+RESISTANCE_OPTIONS = [str(n) for n in range(-9, 10)]
+
 
 @dataclass
 class SearchParams:

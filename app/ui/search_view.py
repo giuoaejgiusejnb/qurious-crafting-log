@@ -3,9 +3,12 @@ from pathlib import Path
 
 import flet as ft
 
+from app.core.armor_defaults import ArmorSearchDefaults, list_armors_using_skill_set
 from app.core.collection import CollectionLimitError, set_collected
 from app.core.search import (
+    COST_OPTIONS,
     DEFAULT_SORT,
+    RESISTANCE_OPTIONS,
     SearchParams,
     fetch_distinct_import_dates,
     fetch_distinct_labels,
@@ -31,13 +34,8 @@ _UNSELECTED = "__unselected__"
 _UNSAVED = "__unsaved__"
 _PAGE_SIZE = 200
 
-# コスト以上/以下ドロップダウンの選択肢（3の倍数、3〜42）
-_COST_OPTIONS = [str(n) for n in range(3, 43, 3)]
 _DEFAULT_COST_MIN = "3"
 _DEFAULT_COST_MAX = "42"
-
-# 耐性以上/以下ドロップダウンの選択肢（-9〜9）。未選択なら絞り込みなし。
-_RESISTANCE_OPTIONS = [str(n) for n in range(-9, 10)]
 
 _BATCH_MODE = "batch"
 _DATE_RANGE_MODE = "date_range"
@@ -93,12 +91,14 @@ def build_search_view(
     page: ft.Page,
     db_path: Path,
     on_collected: Callable[[int], None] | None = None,
-) -> tuple[ft.Control, Callable[[], None], Callable[[int], None]]:
+) -> tuple[ft.Control, Callable[[], None], Callable[[int, ArmorSearchDefaults | None], None]]:
     """検索画面を構築する。
 
     戻り値は (画面コントロール, バッチ/防具選択肢を最新化する関数,
-    指定バッチを対象に他の条件をリセットして検索を実行する関数)。
-    後者2つは取込タブ・履歴タブからの連携に使う。
+    指定バッチを対象に検索を実行する関数)。
+    最後の関数は取込タブ・履歴タブからの連携に使う。第2引数（防具ごとの
+    検索初期設定）を渡すとその内容を復元し（取込タブから遷移時）、
+    省略するとすべて既定値にリセットする（履歴タブから遷移時）。
     on_collectedは「回収」にチェックを入れたときにバッチIDを渡して呼ばれ、
     回収確認サイドパネルを自動的に開くのに使う。
     """
@@ -449,10 +449,24 @@ def build_search_view(
         def cancel_delete(e: ft.Event[ft.TextButton]) -> None:
             page.pop_dialog()
 
+        conn = get_connection(db_path)
+        try:
+            armors_using_it = list_armors_using_skill_set(conn, name)
+        finally:
+            conn.close()
+
+        message = f"「{name}」を削除しますか？この操作は取り消せません。"
+        if armors_using_it:
+            armor_list = "、".join(armors_using_it)
+            message += (
+                f"\n\n⚠ このスキル集合は防具「{armor_list}」の検索初期設定（設定タブ）で"
+                "使われています。削除すると、その防具の初期設定はスキル未選択として扱われます。"
+            )
+
         confirm_dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("削除の確認"),
-            content=ft.Text(f"「{name}」を削除しますか？この操作は取り消せません。"),
+            content=ft.Text(message),
             actions=[
                 ft.TextButton(content="キャンセル", on_click=cancel_delete),
                 ft.Button(content="削除する", on_click=do_delete),
@@ -640,13 +654,13 @@ def build_search_view(
         label="コスト以上",
         width=140,
         value=_DEFAULT_COST_MIN,
-        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+        options=[ft.DropdownOption(key=n, text=n) for n in COST_OPTIONS],
     )
     cost_max_dropdown = ft.Dropdown(
         label="コスト以下",
         width=140,
         value=_DEFAULT_COST_MAX,
-        options=[ft.DropdownOption(key=n, text=n) for n in _COST_OPTIONS],
+        options=[ft.DropdownOption(key=n, text=n) for n in COST_OPTIONS],
     )
 
     deficiency_dropdown = ft.Dropdown(
@@ -666,7 +680,7 @@ def build_search_view(
         value=_UNSELECTED,
         options=[
             ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
-            *[ft.DropdownOption(key=n, text=n) for n in _RESISTANCE_OPTIONS],
+            *[ft.DropdownOption(key=n, text=n) for n in RESISTANCE_OPTIONS],
         ],
     )
     resistance_max_dropdown = ft.Dropdown(
@@ -675,7 +689,7 @@ def build_search_view(
         value=_UNSELECTED,
         options=[
             ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
-            *[ft.DropdownOption(key=n, text=n) for n in _RESISTANCE_OPTIONS],
+            *[ft.DropdownOption(key=n, text=n) for n in RESISTANCE_OPTIONS],
         ],
     )
 
@@ -977,17 +991,69 @@ def build_search_view(
     for btn in next_buttons:
         btn.on_click = on_next_click
 
-    def select_batch_and_search(batch_id: int) -> None:
-        """取込タブ・履歴タブから呼ばれ、他の条件をリセットして指定バッチのみを対象に検索する。"""
+    def show_missing_skill_set_warning(skill_set_name: str) -> None:
+        def close_warning(e: ft.Event[ft.Button]) -> None:
+            page.pop_dialog()
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("スキル集合が見つかりません"),
+            content=ft.Text(
+                f"この防具の検索初期設定に登録されているスキル集合「{skill_set_name}」が"
+                "見つからなかったため、スキル未選択で検索しました。\n\n"
+                "（設定タブの「防具ごとの検索初期設定」で登録し直してください）"
+            ),
+            actions=[ft.Button(content="閉じる", on_click=close_warning)],
+        )
+        page.show_dialog(dialog)
+
+    def select_batch_and_search(
+        batch_id: int, defaults: ArmorSearchDefaults | None = None
+    ) -> None:
+        """取込タブ・履歴タブから呼ばれ、指定バッチのみを対象に検索する。
+
+        defaultsが指定された場合（取込タブから、防具ごとの検索初期設定が
+        ある場合に呼ばれる）は、コスト/耐性/スキル欠け/しきい値/並び替え/
+        スキル集合をその内容で復元する。指定されない場合（履歴タブからの
+        遷移時）は、従来通りすべて既定値にリセットする。
+        """
         do_clear_selection()
-        cost_min_dropdown.value = _DEFAULT_COST_MIN
-        cost_max_dropdown.value = _DEFAULT_COST_MAX
-        resistance_min_dropdown.value = _UNSELECTED
-        resistance_max_dropdown.value = _UNSELECTED
+
+        if defaults is not None:
+            cost_min_dropdown.value = str(defaults.min_total_cost)
+            cost_max_dropdown.value = str(defaults.max_total_cost)
+            resistance_min_dropdown.value = (
+                str(defaults.min_resistance) if defaults.min_resistance is not None else _UNSELECTED
+            )
+            resistance_max_dropdown.value = (
+                str(defaults.max_resistance) if defaults.max_resistance is not None else _UNSELECTED
+            )
+            deficiency_dropdown.value = (
+                str(defaults.has_deficiency) if defaults.has_deficiency is not None else _UNSELECTED
+            )
+            threshold_dropdown.value = str(defaults.threshold)
+            sort_dropdown.value = defaults.sort
+
+            if defaults.skill_set_name:
+                conn = get_connection(db_path)
+                try:
+                    skill_set_exists = get_skill_set(conn, defaults.skill_set_name) is not None
+                finally:
+                    conn.close()
+                if skill_set_exists:
+                    apply_named_skill_set(defaults.skill_set_name)
+                else:
+                    show_missing_skill_set_warning(defaults.skill_set_name)
+        else:
+            cost_min_dropdown.value = _DEFAULT_COST_MIN
+            cost_max_dropdown.value = _DEFAULT_COST_MAX
+            resistance_min_dropdown.value = _UNSELECTED
+            resistance_max_dropdown.value = _UNSELECTED
+            deficiency_dropdown.value = _UNSELECTED
+            threshold_dropdown.value = "1"
+            sort_dropdown.value = DEFAULT_SORT
+
         label_dropdown.value = _UNSELECTED
-        deficiency_dropdown.value = _UNSELECTED
-        threshold_dropdown.value = "1"
-        sort_dropdown.value = DEFAULT_SORT
         date_from_dropdown.value = _UNSELECTED
         date_to_dropdown.value = _UNSELECTED
         condition_section.visible = False

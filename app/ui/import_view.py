@@ -3,13 +3,12 @@ from typing import Callable
 
 import flet as ft
 
+from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS
 from app.core.importer import import_block
 from app.core.settings import get_json_setting, get_setting, set_json_setting, set_setting
 from app.db.connection import get_connection
 
-DEFAULT_EQUIPMENT_OPTIONS = ["ギルパレ脚", "クシャ胴", "マッスル腕"]
 LAST_SELECTION_KEY = "import_label_last_selection"
-CUSTOM_OPTIONS_KEY = "import_label_custom_options"
 
 _PRESET_COLORS = [ft.Colors.RED_200, ft.Colors.BLUE_200, ft.Colors.GREEN_200]
 _CUSTOM_COLOR = ft.Colors.AMBER_100
@@ -20,13 +19,14 @@ def build_import_view(
     page: ft.Page,
     db_path: Path,
     on_imported: Callable[[int], None] | None = None,
-    on_show_results: Callable[[int], None] | None = None,
+    on_show_results: Callable[[int, str | None], None] | None = None,
 ) -> ft.Control:
     """取込画面を構築する。
 
     on_importedは取込成功時（バッチID付き）に呼ばれ、他タブの一覧更新に使う。
     on_show_resultsは「結果を表示しますか」の確認で「はい」を選んだ時に
-    バッチIDを渡して呼ばれ、検索タブへの遷移に使う。
+    バッチID・防具名を渡して呼ばれ、検索タブへの遷移（防具ごとの初期設定の
+    適用）に使う。
     """
     progress_bar = ft.ProgressBar(width=400, value=0, visible=False)
     status_text = ft.Text()
@@ -178,13 +178,13 @@ def build_import_view(
         status_text.value = f"取込中... {done}/{total}"
         page.update()
 
-    def ask_show_results(batch_id: int) -> None:
+    def ask_show_results(batch_id: int, label: str | None) -> None:
         """取込完了後に表示し、「はい」ならon_show_resultsで検索タブへ遷移する。"""
 
         def on_yes(e: ft.Event[ft.Button]) -> None:
             page.pop_dialog()
             if on_show_results is not None:
-                on_show_results(batch_id)
+                on_show_results(batch_id, label)
 
         def on_no(e: ft.Event[ft.TextButton]) -> None:
             page.pop_dialog()
@@ -234,7 +234,7 @@ def build_import_view(
             if on_imported is not None:
                 on_imported(summary.batch_id)  # 検索/履歴タブのバッチ一覧を最新化する
             if on_show_results is not None:
-                ask_show_results(summary.batch_id)
+                ask_show_results(summary.batch_id, label)
 
     async def on_clipboard_click(e: ft.Event[ft.Button]) -> None:
         text = await ft.Clipboard().get()
