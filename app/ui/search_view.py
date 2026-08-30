@@ -35,9 +35,6 @@ _SAVED_SETS_PER_ROW = 3
 # だいぶ広くなるため、ダイアログの幅（760px）に収まるよう余裕を持たせている。
 _SAVED_SET_NAME_WIDTH = 100
 _UNSELECTED = "__unselected__"
-# 保存済み集合と一致しない、チェックボックスでの手動選択中であることを示す
-# ドロップダウンの表示専用オプション（選んでも何も起きない）。
-_UNSAVED = "__unsaved__"
 _PAGE_SIZE = 200
 
 _DEFAULT_COST_MIN = "3"
@@ -108,9 +105,13 @@ def build_search_view(
     on_collectedは「回収」にチェックを入れたときにバッチIDを渡して呼ばれ、
     回収確認サイドパネルを自動的に開くのに使う。
     """
+    # skill_checkboxesは「検索するスキル集合を作成」ダイアログ内だけで完結する
+    # 作業領域（スクラッチパッド）。ここでの操作（チェックの切り替え、一覧からの
+    # 読み込みなど）はcurrent_set_dropdownには一切影響しない。検索に実際に使う
+    # スキル集合はcurrent_set_dropdownの選択のみで決まり、「保存」または
+    # （選択中の集合が）「削除」された場合にのみドロップダウンが変わる。
     skill_checkboxes: dict[str, ft.Checkbox] = {}
     selected_summary_container = ft.Container()
-    current_skill_set_name: str | None = None
     current_set_dropdown = ft.Dropdown(
         label="使用するスキル集合",
         width=280,
@@ -119,40 +120,26 @@ def build_search_view(
     )
 
     def refresh_current_set_dropdown() -> None:
-        """スキル集合ドロップダウンの選択肢・表示値を、現在の状態に合わせて更新する。"""
+        """スキル集合ドロップダウンの選択肢を更新する。
+
+        現在の選択値が引き続き有効（未選択、または存在する保存済み集合名）で
+        あればそのまま維持し、そうでなくなっていれば（選択中だった集合が
+        削除された場合など）未選択に戻す。他の絞り込み用ドロップダウン
+        （バッチ・防具など）と同じ「無効になっていたらリセット」方式。
+        """
         conn = get_connection(db_path)
         try:
             saved_names = list_skill_set_names(conn)
         finally:
             conn.close()
 
-        options = [ft.DropdownOption(key=_UNSELECTED, text="（未選択）")]
-        has_unsaved_selection = current_skill_set_name is None and any(
-            checkbox.value for checkbox in skill_checkboxes.values()
-        )
-        if has_unsaved_selection:
-            options.append(ft.DropdownOption(key=_UNSAVED, text="（未保存の選択）"))
-        options.extend(ft.DropdownOption(key=n, text=n) for n in saved_names)
+        options = [
+            ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
+            *[ft.DropdownOption(key=n, text=n) for n in saved_names],
+        ]
         current_set_dropdown.options = options
-
-        if current_skill_set_name:
-            current_set_dropdown.value = current_skill_set_name
-        elif has_unsaved_selection:
-            current_set_dropdown.value = _UNSAVED
-        else:
+        if current_set_dropdown.value not in {opt.key for opt in options}:
             current_set_dropdown.value = _UNSELECTED
-
-    def on_current_set_dropdown_select(e: ft.Event[ft.Dropdown]) -> None:
-        value = current_set_dropdown.value
-        if value == _UNSAVED:
-            return  # 表示専用の状態のため、選んでも何もしない
-        if value and value != _UNSELECTED:
-            apply_named_skill_set(value)
-        else:
-            do_clear_selection()
-            page.update()
-
-    current_set_dropdown.on_select = on_current_set_dropdown_select
 
     def update_selected_summary() -> None:
         selected = [
@@ -178,11 +165,8 @@ def build_search_view(
         selected_summary_container.content = ft.Column(rows, spacing=4)
 
     def mark_manual_selection_change() -> None:
-        """スキル選択が手動で変わったときの共通処理（個別チェックボックス・一括選択/クリア共通）。"""
-        nonlocal current_skill_set_name
-        current_skill_set_name = None  # 手動変更したので保存済み集合との対応は外れる
+        """チェックボックスの状態が変わったときの共通処理（ダイアログ内表示の更新のみ）。"""
         update_selected_summary()
-        refresh_current_set_dropdown()
 
     def on_skill_checkbox_change(e: ft.Event[ft.Checkbox]) -> None:
         mark_manual_selection_change()
@@ -251,12 +235,9 @@ def build_search_view(
         return ft.Column(sections, spacing=8)
 
     def do_clear_selection() -> None:
-        nonlocal current_skill_set_name
         for checkbox in skill_checkboxes.values():
             checkbox.value = False
-        current_skill_set_name = None
         update_selected_summary()
-        refresh_current_set_dropdown()
 
     def clear_skill_selection(e: ft.Event[ft.TextButton]) -> None:
         do_clear_selection()
@@ -269,14 +250,14 @@ def build_search_view(
     save_set_status_text = ft.Text(size=12)
 
     def do_save_skill_set(name: str, selected_names: list[str]) -> None:
-        nonlocal current_skill_set_name
         conn = get_connection(db_path)
         try:
             save_skill_set(conn, name, selected_names)
         finally:
             conn.close()
 
-        current_skill_set_name = name
+        # 保存してもcurrent_set_dropdownの選択は変えない（ドロップダウンの選択肢
+        # 一覧だけは、新しく保存した名前を選べるように更新する）。
         refresh_current_set_dropdown()
         refresh_saved_sets_list()
         save_set_status_text.value = f"「{name}」として保存しました"
@@ -369,16 +350,26 @@ def build_search_view(
     select_skill_button.on_click = open_skill_dialog
 
     def open_current_selection_detail(e: ft.Event[ft.IconButton]) -> None:
-        selected = [
-            name for name, checkbox in skill_checkboxes.items() if checkbox.value
-        ]
+        # 実際に検索で使われるcurrent_set_dropdownの選択内容を表示する
+        # （ダイアログ内のチェックボックスの状態ではない）。
+        value = current_set_dropdown.value
+        if value and value != _UNSELECTED:
+            conn = get_connection(db_path)
+            try:
+                selected = get_skill_set(conn, value) or []
+            finally:
+                conn.close()
+            title = value
+        else:
+            selected = []
+            title = "現在選択中のスキル"
 
         def close_detail(e: ft.Event[ft.TextButton]) -> None:
             page.pop_dialog()
 
         dialog = ft.AlertDialog(
             modal=True,
-            title=ft.Text(current_skill_set_name or "現在選択中のスキル"),
+            title=ft.Text(title),
             content=ft.Text(
                 "、".join(selected) if selected else "（スキルが選択されていません）"
             ),
@@ -392,31 +383,13 @@ def build_search_view(
         on_click=open_current_selection_detail,
     )
 
-    def apply_named_skill_set(name: str) -> None:
-        nonlocal current_skill_set_name
-        conn = get_connection(db_path)
-        try:
-            names = get_skill_set(conn, name) or []
-        finally:
-            conn.close()
-
-        names_set = set(names)
-        for skill_name, checkbox in skill_checkboxes.items():
-            checkbox.value = skill_name in names_set
-        current_skill_set_name = name
-        update_selected_summary()
-        refresh_current_set_dropdown()
-        save_set_status_text.value = f"「{name}」を選択中のスキルに反映しました"
-        page.update()
-
     def load_named_skill_set_into_checklist(name: str) -> None:
-        """「保存済みのスキル集合」一覧でのクリック時に呼ばれる。
+        """「保存済みのスキル集合」一覧の名前クリック時に呼ばれる。
 
-        チェックボックスには内容を反映するが、検索に使うスキル集合
-        （current_set_dropdownの選択）は変更しない。一覧をクリックする
-        操作はプレビュー/編集目的であり、「このスキル集合を検索に使う」という
-        意思表示ではないため（検索に使うには、ドロップダウンで選ぶか、
-        詳細ダイアログの「このスキル集合を使う」を押す）。
+        チェックボックス（ダイアログ内の作業領域）には内容を反映するが、
+        current_set_dropdown（実際に検索に使われる値）は一切変更しない。
+        既存の内容を下敷きにして編集・上書き保存するための読み込みであり、
+        「これを検索に使う」という意思表示ではないため。
         """
         conn = get_connection(db_path)
         try:
@@ -427,7 +400,7 @@ def build_search_view(
         names_set = set(names)
         for skill_name, checkbox in skill_checkboxes.items():
             checkbox.value = skill_name in names_set
-        mark_manual_selection_change()  # 手動選択扱いにする（current_skill_set_nameはNoneに戻る）
+        mark_manual_selection_change()
         save_set_status_text.value = f"「{name}」の内容をチェックボックスに読み込みました"
         page.update()
 
@@ -455,15 +428,15 @@ def build_search_view(
 
     def confirm_delete_skill_set(name: str) -> None:
         def do_delete(e: ft.Event[ft.Button]) -> None:
-            nonlocal current_skill_set_name
             conn = get_connection(db_path)
             try:
                 delete_skill_set(conn, name)
             finally:
                 conn.close()
-            if current_skill_set_name == name:
-                current_skill_set_name = None
-                refresh_current_set_dropdown()
+            # current_set_dropdownが削除した名前を選択中だった場合のみ、
+            # 未選択に戻る（refresh_current_set_dropdown内の「無効なら
+            # リセット」ロジックによる。それ以外は変更しない）。
+            refresh_current_set_dropdown()
             page.pop_dialog()
             refresh_saved_sets_list()
             save_set_status_text.value = f"「{name}」を削除しました"
@@ -512,6 +485,12 @@ def build_search_view(
             entries.append(
                 ft.Row(
                     [
+                        # 名前をクリックすると、その内容をチェックボックスに読み込む
+                        # （編集・上書き保存の下書き用）。current_set_dropdownは
+                        # 直接は変更しないが、チェックボックスの状態が変わるため
+                        # 結果的に「（未保存の選択）」表示になる（手動でのチェック
+                        # 操作と同じ扱い。検索に使うスキル集合の切り替えは
+                        # ドロップダウンでの選択のみ）。
                         ft.TextButton(
                             content=ft.Text(
                                 name,
@@ -886,11 +865,6 @@ def build_search_view(
         page.update()
 
     def build_current_params(offset: int) -> SearchParams | None:
-        # スキル未選択でもよい（他の条件のみで検索する）
-        selected_names = [
-            name for name, checkbox in skill_checkboxes.items() if checkbox.value
-        ]
-
         try:
             min_total_cost = int(cost_min_dropdown.value or _DEFAULT_COST_MIN)
             max_total_cost = int(cost_max_dropdown.value or _DEFAULT_COST_MAX)
@@ -919,6 +893,17 @@ def build_search_view(
             return None
 
         mode = batch_date_mode_group.value
+
+        # 検索に使うスキル集合は、ダイアログ内のチェックボックスではなく
+        # current_set_dropdownの選択内容をDBから読み直したものを使う
+        # （スキル未選択でもよい。その場合は他の条件のみで検索する）。
+        selected_names: list[str] = []
+        if current_set_dropdown.value and current_set_dropdown.value != _UNSELECTED:
+            conn = get_connection(db_path)
+            try:
+                selected_names = get_skill_set(conn, current_set_dropdown.value) or []
+            finally:
+                conn.close()
 
         conn = get_connection(db_path)
         try:
@@ -1074,9 +1059,12 @@ def build_search_view(
                 finally:
                     conn.close()
                 if skill_set_exists:
-                    apply_named_skill_set(defaults.skill_set_name)
+                    current_set_dropdown.value = defaults.skill_set_name
                 else:
+                    current_set_dropdown.value = _UNSELECTED
                     show_missing_skill_set_warning(defaults.skill_set_name)
+            else:
+                current_set_dropdown.value = _UNSELECTED
         else:
             cost_min_dropdown.value = _DEFAULT_COST_MIN
             cost_max_dropdown.value = _DEFAULT_COST_MAX
@@ -1085,6 +1073,7 @@ def build_search_view(
             deficiency_dropdown.value = _UNSELECTED
             threshold_dropdown.value = "1"
             sort_dropdown.value = DEFAULT_SORT
+            current_set_dropdown.value = _UNSELECTED
 
         label_dropdown.value = _UNSELECTED
         date_from_dropdown.value = _UNSELECTED
