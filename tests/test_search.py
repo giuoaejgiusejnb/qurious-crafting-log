@@ -221,6 +221,24 @@ def test_search_filters_by_has_deficiency(conn):
     assert [r.zeny_count for r in search_results(conn, params_yes)] == [2]
 
 
+def test_search_filters_by_resistance_range(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=1, resistance=-8, skills=[("攻撃", 2)]),
+            build_row(zeny_count=2, resistance=0, skills=[("攻撃", 2)]),
+            build_row(zeny_count=3, resistance=5, skills=[("攻撃", 2)]),
+        ]
+    )
+    import_block(conn, text)
+
+    params = SearchParams(
+        allowed_skill_ids=_allowed_ids(conn), threshold=2, min_resistance=-3, max_resistance=3
+    )
+    rows = search_results(conn, params)
+
+    assert [r.zeny_count for r in rows] == [2]
+
+
 def test_search_filters_by_date_range(conn):
     summary1 = import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 2)]))
     conn.execute(

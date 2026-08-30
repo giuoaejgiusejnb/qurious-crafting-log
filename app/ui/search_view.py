@@ -36,6 +36,20 @@ _COST_OPTIONS = [str(n) for n in range(3, 43, 3)]
 _DEFAULT_COST_MIN = "3"
 _DEFAULT_COST_MAX = "42"
 
+# 耐性以上/以下ドロップダウンの選択肢（-10〜10）。両端は「以下」「以上」の
+# 開区間として扱う（-10なら-10以下すべて、10なら10以上すべてを含む）。
+_RESISTANCE_OPTIONS = [str(n) for n in range(-10, 11)]
+_DEFAULT_RESISTANCE_MIN = "-10"
+_DEFAULT_RESISTANCE_MAX = "10"
+
+
+def _resistance_option_text(n: str) -> str:
+    if n == _DEFAULT_RESISTANCE_MIN:
+        return f"{n}以下"
+    if n == _DEFAULT_RESISTANCE_MAX:
+        return f"{n}以上"
+    return n
+
 _BATCH_MODE = "batch"
 _DATE_RANGE_MODE = "date_range"
 
@@ -657,6 +671,23 @@ def build_search_view(
         ],
     )
 
+    resistance_min_dropdown = ft.Dropdown(
+        label="耐性以上",
+        width=140,
+        value=_DEFAULT_RESISTANCE_MIN,
+        options=[
+            ft.DropdownOption(key=n, text=_resistance_option_text(n)) for n in _RESISTANCE_OPTIONS
+        ],
+    )
+    resistance_max_dropdown = ft.Dropdown(
+        label="耐性以下",
+        width=140,
+        value=_DEFAULT_RESISTANCE_MAX,
+        options=[
+            ft.DropdownOption(key=n, text=_resistance_option_text(n)) for n in _RESISTANCE_OPTIONS
+        ],
+    )
+
     def condition_heading(text: str) -> ft.Control:
         # 検索ボタンほどではないが、他の項目より目に留まるよう色と大きさをつける
         return ft.Text(f"・{text}", size=15, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)
@@ -681,6 +712,8 @@ def build_search_view(
             ),
             condition_heading("スキル欠け"),
             ft.Row([deficiency_dropdown]),
+            condition_heading("耐性"),
+            ft.Row([resistance_min_dropdown, resistance_max_dropdown]),
         ],
         spacing=6,
         visible=False,
@@ -832,6 +865,18 @@ def build_search_view(
             page.update()
             return None
 
+        try:
+            min_resistance = int(resistance_min_dropdown.value or _DEFAULT_RESISTANCE_MIN)
+            max_resistance = int(resistance_max_dropdown.value or _DEFAULT_RESISTANCE_MAX)
+        except ValueError:
+            status_text.value = "耐性の指定が不正です"
+            page.update()
+            return None
+        if min_resistance > max_resistance:
+            status_text.value = "「耐性以上」は「耐性以下」より大きくできません"
+            page.update()
+            return None
+
         mode = batch_date_mode_group.value
 
         conn = get_connection(db_path)
@@ -879,6 +924,8 @@ def build_search_view(
                 if deficiency_dropdown.value and deficiency_dropdown.value != _UNSELECTED
                 else None
             ),
+            min_resistance=min_resistance,
+            max_resistance=max_resistance,
             # 1件多く取得し、201件目があれば「次へ」を有効にする（COUNT(*)を避けるため）
             limit=_PAGE_SIZE + 1,
             offset=offset,
@@ -941,6 +988,8 @@ def build_search_view(
         do_clear_selection()
         cost_min_dropdown.value = _DEFAULT_COST_MIN
         cost_max_dropdown.value = _DEFAULT_COST_MAX
+        resistance_min_dropdown.value = _DEFAULT_RESISTANCE_MIN
+        resistance_max_dropdown.value = _DEFAULT_RESISTANCE_MAX
         label_dropdown.value = _UNSELECTED
         deficiency_dropdown.value = _UNSELECTED
         threshold_dropdown.value = "1"

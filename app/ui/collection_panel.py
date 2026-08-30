@@ -1,9 +1,13 @@
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import flet as ft
 
-from app.core.collection import CollectionLimitError, fetch_collected_in_batch, set_collected
+from app.core.collection import (
+    CollectionLimitError,
+    fetch_collected_in_batch,
+    set_collected,
+)
 from app.core.search import fetch_skill_breakdown
 from app.db.connection import get_connection
 from app.ui.skills_display import build_skills_wrap
@@ -41,7 +45,9 @@ def build_collection_panel(
                 conn.close()
 
             if not checkbox.value:
-                render_batch(batch_id)  # チェックを外したら一覧から消す（page.update()も内部で行う）
+                render_batch(
+                    batch_id
+                )  # チェックを外したら一覧から消す（page.update()も内部で行う）
             else:
                 page.update()
 
@@ -56,11 +62,13 @@ def build_collection_panel(
         finally:
             conn.close()
 
-        status_text.value = f"バッチ #{batch_id}: 回収済み{len(rows)}件"
+        status_text.value = f"バッチ #{batch_id}: 回収予定{len(rows)}件"
 
         results_list.controls.clear()
         if not rows:
-            results_list.controls.append(ft.Text("このバッチに回収済みの結果はありません"))
+            results_list.controls.append(
+                ft.Text("このバッチに回収予定の練成はありません")
+            )
             page.update()
             return
 
@@ -74,20 +82,30 @@ def build_collection_panel(
                         [
                             ft.Row(
                                 [
-                                    ft.Text(f"練成{row.zeny_count}回目", weight=ft.FontWeight.BOLD),
+                                    ft.Text(
+                                        f"練成{row.zeny_count}回目",
+                                        weight=ft.FontWeight.BOLD,
+                                    ),
                                     make_collected_checkbox(row.id, batch_id),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             ),
-                            ft.Text(f"ゼニー: {row.zeny}　コスト: {row.total_cost}", size=12),
                             ft.Text(
-                                f"スロット: {row.slot_add}　耐性: {row.print_resistance}", size=12
+                                f"ゼニー: {row.zeny}　コスト: {row.total_cost}", size=12
                             ),
-                            build_skills_wrap(breakdown.get(row.id, []), width=_SKILLS_WRAP_WIDTH),
+                            ft.Text(
+                                f"スロット: {row.slot_add}　耐性: {row.print_resistance}",
+                                size=12,
+                            ),
+                            build_skills_wrap(
+                                breakdown.get(row.id, []), width=_SKILLS_WRAP_WIDTH
+                            ),
                         ],
                         spacing=2,
                     ),
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST if index % 2 == 1 else None,
+                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST
+                    if index % 2 == 1
+                    else None,
                     padding=ft.Padding.symmetric(vertical=4, horizontal=4),
                 )
             )
@@ -108,7 +126,9 @@ def build_collection_panel(
                 ft.Row(
                     [
                         ft.Text("回収確認", size=16, weight=ft.FontWeight.BOLD),
-                        ft.IconButton(icon=ft.Icons.CLOSE, tooltip="閉じる", on_click=close_panel),
+                        ft.IconButton(
+                            icon=ft.Icons.CLOSE, tooltip="閉じる", on_click=close_panel
+                        ),
                     ]
                 ),
                 status_text,
