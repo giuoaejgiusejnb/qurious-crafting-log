@@ -12,7 +12,7 @@ from app.core.update_check import (
     set_update_check_enabled,
 )
 from app.db.connection import get_connection
-from app.ui.collection_view import build_collection_view
+from app.ui.collection_panel import build_collection_panel
 from app.ui.contact_view import build_contact_view
 from app.ui.history_view import build_history_view
 from app.ui.import_view import build_import_view
@@ -76,10 +76,16 @@ def main(page: ft.Page) -> None:
         )
     )
 
-    # 検索・回収タブを先に構築し、それぞれの「一覧を最新化する」関数を取得しておく。
-    # 取込タブ側は取込成功時にこれらを呼び出すことで、再起動なしに反映されるようにする。
-    search_view, refresh_search_filters, select_search_batch = build_search_view(page, DB_PATH)
-    collection_view, refresh_collection_batches = build_collection_view(page, DB_PATH)
+    # 検索タブを先に構築し、「一覧を最新化する」関数を取得しておく。
+    # 取込タブ側は取込成功時にこれを呼び出すことで、再起動なしに反映されるようにする。
+    # on_collectedは検索タブで「回収」にチェックを入れたときに呼ばれ、
+    # そのバッチの回収確認サイドパネルを自動的に開くのに使う。
+    collection_panel, open_collection_panel, close_collection_panel = build_collection_panel(
+        page, DB_PATH
+    )
+    search_view, refresh_search_filters, select_search_batch = build_search_view(
+        page, DB_PATH, on_collected=open_collection_panel
+    )
 
     SEARCH_TAB_INDEX = 1
 
@@ -89,41 +95,11 @@ def main(page: ft.Page) -> None:
         select_search_batch(batch_id)
 
     def on_batch_deleted() -> None:
-        """履歴タブでのバッチ削除時に外部から呼ばれ、他タブのバッチ一覧を最新化する。"""
+        """履歴タブでのバッチ削除時に外部から呼ばれる。バッチ一覧を最新化し、
+        削除されたバッチの内容が回収確認パネルに残らないよう念のため閉じる。
+        """
         refresh_search_filters()
-        refresh_collection_batches()
-
-    # --- 回収確認サイドパネル（試作） ---
-    # タブとは独立して画面の横に居座り、どのタブを表示していても回収確認の
-    # 内容を見比べられるようにする、という案の動作確認用。中身はまだ仮。
-    collection_panel_body = ft.Text()
-
-    def close_collection_panel(e: ft.Event[ft.IconButton]) -> None:
-        collection_panel.visible = False
-        page.update()
-
-    collection_panel = ft.Container(
-        content=ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.Text("回収確認（試作）", weight=ft.FontWeight.BOLD),
-                        ft.IconButton(icon=ft.Icons.CLOSE, on_click=close_collection_panel),
-                    ]
-                ),
-                collection_panel_body,
-            ]
-        ),
-        width=280,
-        padding=12,
-        bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST,
-        visible=False,
-    )
-
-    def open_collection_panel(batch_id: int) -> None:
-        collection_panel_body.value = f"バッチ #{batch_id} の回収確認（中身は試作のため未実装）"
-        collection_panel.visible = True
-        page.update()
+        close_collection_panel()
 
     history_view, refresh_history_batches = build_history_view(
         page,
@@ -136,7 +112,6 @@ def main(page: ft.Page) -> None:
     def on_imported(batch_id: int) -> None:
         refresh_search_filters()
         refresh_history_batches()
-        refresh_collection_batches()
 
     import_view = build_import_view(
         page, DB_PATH, on_imported=on_imported, on_show_results=go_to_search_with_batch
@@ -146,7 +121,7 @@ def main(page: ft.Page) -> None:
     contact_view = build_contact_view(page, DB_PATH)
 
     tabs_control = ft.Tabs(
-        length=6,
+        length=5,
         expand=True,
         content=ft.Column(
             expand=True,
@@ -156,7 +131,6 @@ def main(page: ft.Page) -> None:
                         ft.Tab(label="取込"),
                         ft.Tab(label="検索"),
                         ft.Tab(label="履歴"),
-                        ft.Tab(label="回収"),
                         ft.Tab(label="設定"),
                         ft.Tab(label="お問い合わせ"),
                     ]
@@ -167,7 +141,6 @@ def main(page: ft.Page) -> None:
                         import_view,
                         search_view,
                         history_view,
-                        collection_view,
                         settings_view,
                         contact_view,
                     ],
@@ -187,7 +160,6 @@ def main(page: ft.Page) -> None:
         import_view,
         search_view,
         history_view,
-        collection_view,
         settings_view,
         contact_view,
     ]

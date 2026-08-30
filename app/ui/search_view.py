@@ -87,13 +87,17 @@ def _load_import_date_options(db_path: Path) -> list[str]:
 
 
 def build_search_view(
-    page: ft.Page, db_path: Path
+    page: ft.Page,
+    db_path: Path,
+    on_collected: Callable[[int], None] | None = None,
 ) -> tuple[ft.Control, Callable[[], None], Callable[[int], None]]:
     """検索画面を構築する。
 
     戻り値は (画面コントロール, バッチ/防具選択肢を最新化する関数,
     指定バッチを対象に他の条件をリセットして検索を実行する関数)。
     後者2つは取込タブ・履歴タブからの連携に使う。
+    on_collectedは「回収」にチェックを入れたときにバッチIDを渡して呼ばれ、
+    回収確認サイドパネルを自動的に開くのに使う。
     """
     skill_checkboxes: dict[str, ft.Checkbox] = {}
     selected_summary_container = ft.Container()
@@ -739,18 +743,22 @@ def build_search_view(
         checkbox = ft.Checkbox(value=initial)
 
         def on_change(e: ft.Event[ft.Checkbox]) -> None:
+            checked = bool(checkbox.value)
             conn = get_connection(db_path)
             try:
                 try:
-                    set_collected(conn, result_id, batch_id, checkbox.value)
+                    set_collected(conn, result_id, batch_id, checked)
                 except CollectionLimitError as exc:
                     checkbox.value = (
                         False  # 上限超過は必ず「チェックしようとした」失敗なので戻す
                     )
                     status_text.value = str(exc)
+                    checked = False
             finally:
                 conn.close()
             page.update()
+            if checked and on_collected is not None:
+                on_collected(batch_id)  # 回収確認サイドパネルを自動的に開く
 
         checkbox.on_change = on_change
         return checkbox
