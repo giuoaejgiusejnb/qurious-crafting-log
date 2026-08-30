@@ -26,6 +26,9 @@ from app.ui.skills_display import build_skills_wrap
 _SKILLS_PER_ROW = 5
 _SUMMARY_CHIPS_PER_ROW = 8
 _UNSELECTED = "__unselected__"
+# 保存済み集合と一致しない、チェックボックスでの手動選択中であることを示す
+# ドロップダウンの表示専用オプション（選んでも何も起きない）。
+_UNSAVED = "__unsaved__"
 _PAGE_SIZE = 200
 
 # コスト以上/以下ドロップダウンの選択肢（3の倍数、3〜42）
@@ -95,15 +98,48 @@ def build_search_view(
     skill_checkboxes: dict[str, ft.Checkbox] = {}
     selected_summary_container = ft.Container()
     current_skill_set_name: str | None = None
-    current_set_name_text = ft.Text("未選択", weight=ft.FontWeight.BOLD)
+    current_set_dropdown = ft.Dropdown(
+        label="使用するスキル集合",
+        width=280,
+        value=_UNSELECTED,
+        options=[ft.DropdownOption(key=_UNSELECTED, text="（未選択）")],
+    )
 
-    def refresh_current_set_label() -> None:
+    def refresh_current_set_dropdown() -> None:
+        """スキル集合ドロップダウンの選択肢・表示値を、現在の状態に合わせて更新する。"""
+        conn = get_connection(db_path)
+        try:
+            saved_names = list_skill_set_names(conn)
+        finally:
+            conn.close()
+
+        options = [ft.DropdownOption(key=_UNSELECTED, text="（未選択）")]
+        has_unsaved_selection = current_skill_set_name is None and any(
+            checkbox.value for checkbox in skill_checkboxes.values()
+        )
+        if has_unsaved_selection:
+            options.append(ft.DropdownOption(key=_UNSAVED, text="（未保存の選択）"))
+        options.extend(ft.DropdownOption(key=n, text=n) for n in saved_names)
+        current_set_dropdown.options = options
+
         if current_skill_set_name:
-            current_set_name_text.value = current_skill_set_name
-        elif any(checkbox.value for checkbox in skill_checkboxes.values()):
-            current_set_name_text.value = "（未保存の選択）"
+            current_set_dropdown.value = current_skill_set_name
+        elif has_unsaved_selection:
+            current_set_dropdown.value = _UNSAVED
         else:
-            current_set_name_text.value = "未選択"
+            current_set_dropdown.value = _UNSELECTED
+
+    def on_current_set_dropdown_select(e: ft.Event[ft.Dropdown]) -> None:
+        value = current_set_dropdown.value
+        if value == _UNSAVED:
+            return  # 表示専用の状態のため、選んでも何もしない
+        if value and value != _UNSELECTED:
+            apply_named_skill_set(value)
+        else:
+            do_clear_selection()
+            page.update()
+
+    current_set_dropdown.on_select = on_current_set_dropdown_select
 
     def update_selected_summary() -> None:
         selected = [
@@ -132,7 +168,7 @@ def build_search_view(
         nonlocal current_skill_set_name
         current_skill_set_name = None  # 手動変更したので保存済み集合との対応は外れる
         update_selected_summary()
-        refresh_current_set_label()
+        refresh_current_set_dropdown()
         page.update()
 
     def build_checkbox_rows(
@@ -178,7 +214,7 @@ def build_search_view(
             checkbox.value = False
         current_skill_set_name = None
         update_selected_summary()
-        refresh_current_set_label()
+        refresh_current_set_dropdown()
 
     def clear_skill_selection(e: ft.Event[ft.TextButton]) -> None:
         do_clear_selection()
@@ -199,7 +235,7 @@ def build_search_view(
             conn.close()
 
         current_skill_set_name = name
-        refresh_current_set_label()
+        refresh_current_set_dropdown()
         refresh_saved_sets_list()
         save_set_status_text.value = f"「{name}」として保存しました"
         save_set_name_field.value = ""
@@ -314,16 +350,6 @@ def build_search_view(
         on_click=open_current_selection_detail,
     )
 
-    def clear_current_selection_from_main(e: ft.Event[ft.IconButton]) -> None:
-        do_clear_selection()
-        page.update()
-
-    clear_current_selection_button = ft.IconButton(
-        icon=ft.Icons.CLOSE,
-        tooltip="未選択に戻す",
-        on_click=clear_current_selection_from_main,
-    )
-
     def apply_named_skill_set(name: str) -> None:
         nonlocal current_skill_set_name
         conn = get_connection(db_path)
@@ -337,7 +363,7 @@ def build_search_view(
             checkbox.value = skill_name in names_set
         current_skill_set_name = name
         update_selected_summary()
-        refresh_current_set_label()
+        refresh_current_set_dropdown()
         save_set_status_text.value = f"「{name}」を選択中のスキルに反映しました"
         page.update()
 
@@ -378,7 +404,7 @@ def build_search_view(
                 conn.close()
             if current_skill_set_name == name:
                 current_skill_set_name = None
-                refresh_current_set_label()
+                refresh_current_set_dropdown()
             page.pop_dialog()
             refresh_saved_sets_list()
             save_set_status_text.value = f"「{name}」を削除しました"
@@ -442,6 +468,7 @@ def build_search_view(
     refresh_saved_sets_list()
 
     update_selected_summary()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
+    refresh_current_set_dropdown()  # 同上
 
     batch_dropdown = ft.Dropdown(
         label="対象バッチ",
@@ -549,7 +576,7 @@ def build_search_view(
     threshold_dropdown = ft.Dropdown(
         label="必要な個数（1〜4）",
         width=160,
-        value="2",
+        value="1",
         options=[ft.DropdownOption(key=str(n), text=str(n)) for n in (1, 2, 3, 4)],
     )
 
@@ -586,11 +613,12 @@ def build_search_view(
             ft.Text("スキル", weight=ft.FontWeight.BOLD),
             ft.Row(
                 [
-                    select_skill_button,
-                    current_set_name_text,
+                    current_set_dropdown,
                     current_set_detail_button,
-                    clear_current_selection_button,
+                    ft.Text("に含まれるスキルが"),
                     threshold_dropdown,
+                    ft.Text("個以上含まれる結果を検索"),
+                    select_skill_button,
                 ]
             ),
         ],
@@ -833,7 +861,7 @@ def build_search_view(
         cost_min_dropdown.value = _DEFAULT_COST_MIN
         cost_max_dropdown.value = _DEFAULT_COST_MAX
         label_dropdown.value = _UNSELECTED
-        threshold_dropdown.value = "2"
+        threshold_dropdown.value = "1"
         sort_dropdown.value = DEFAULT_SORT
         date_from_dropdown.value = _UNSELECTED
         date_to_dropdown.value = _UNSELECTED
