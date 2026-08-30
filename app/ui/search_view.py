@@ -653,14 +653,18 @@ def build_search_view(
         ],
     )
 
+    def condition_heading(text: str) -> ft.Control:
+        # 検索ボタンほどではないが、他の項目より目に留まるよう色と大きさをつける
+        return ft.Text(f"・{text}", size=15, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)
+
     # --- 検索条件（コスト/防具/スキル）の折りたたみ ---
     condition_section = ft.Column(
         [
-            ft.Text("・コスト", weight=ft.FontWeight.BOLD),
+            condition_heading("コスト"),
             ft.Row([cost_min_dropdown, cost_max_dropdown]),
-            ft.Text("・防具", weight=ft.FontWeight.BOLD),
+            condition_heading("防具"),
             ft.Row([label_dropdown]),
-            ft.Text("・スキル", weight=ft.FontWeight.BOLD),
+            condition_heading("スキル"),
             ft.Row(
                 [
                     current_set_dropdown,
@@ -671,7 +675,7 @@ def build_search_view(
                     select_skill_button,
                 ]
             ),
-            ft.Text("・スキル欠け", weight=ft.FontWeight.BOLD),
+            condition_heading("スキル欠け"),
             ft.Row([deficiency_dropdown]),
         ],
         spacing=6,
@@ -685,8 +689,12 @@ def build_search_view(
         )
         page.update()
 
+    # 検索ボタンほどではないが、少し目立つように色をつける
     condition_toggle_button = ft.Button(
-        content="検索条件を変更", on_click=toggle_condition_section
+        content="検索条件を変更",
+        on_click=toggle_condition_section,
+        bgcolor=ft.Colors.BLUE_50,
+        color=ft.Colors.BLUE_700,
     )
 
     progress_bar = ft.ProgressBar(width=420, value=0, visible=False)
@@ -697,7 +705,15 @@ def build_search_view(
     # ページあたり最大200件までしか描画しないため、Columnでも表示は軽い。
     results_list = ft.Column(spacing=2)
 
-    search_button = ft.Button(content="検索")
+    # 検索ボタンは一番の主操作なので、他のボタンよりはっきり目立つ見た目にする
+    search_button = ft.Button(
+        content=ft.Text("検索", size=18, weight=ft.FontWeight.BOLD),
+        icon=ft.Icons.SEARCH,
+        bgcolor=ft.Colors.BLUE_600,
+        color=ft.Colors.WHITE,
+        height=48,
+        width=180,
+    )
     prev_button_top = ft.Button(content="前へ", disabled=True)
     next_button_top = ft.Button(content="次へ", disabled=True)
     prev_button_bottom = ft.Button(content="前へ", disabled=True)
