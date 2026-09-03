@@ -47,7 +47,8 @@ def parse_result_log_line(line: str) -> ParsedResult:
     fields = line.split(",")
     if len(fields) != EXPECTED_FIELD_COUNT:
         raise ParseError(
-            f"フィールド数が不正です（{len(fields)}個、期待値{EXPECTED_FIELD_COUNT}個）: {line}"
+            f"フィールド数が不正です（{len(fields)}個、期待値{EXPECTED_FIELD_COUNT}個）\n"
+            f"（行全体: {line}）"
         )
 
     try:
@@ -56,20 +57,22 @@ def parse_result_log_line(line: str) -> ParsedResult:
         slot_add = int(fields[2])
         total_cost = int(fields[3])
     except ValueError as exc:
-        raise ParseError(f"数値への変換に失敗しました: {line}") from exc
+        raise ParseError(f"数値への変換に失敗しました\n（行全体: {line}）") from exc
 
     deficiency_raw = fields[4].strip()
     if deficiency_raw not in _FLAG_VALUES:
         raise ParseError(
-            f"マイナス（スキル欠け）列の値が不正です（'無'または'有'を期待）: "
-            f"{deficiency_raw!r}（行全体: {line}）"
+            f"マイナス（スキル欠け）列の値が不正です（'無'または'有'を期待）: {deficiency_raw!r}\n"
+            f"（行全体: {line}）"
         )
     has_deficiency = _FLAG_VALUES[deficiency_raw]
 
     try:
         print_resistance = int(fields[5])
     except ValueError as exc:
-        raise ParseError(f"耐性列の値の変換に失敗しました: {fields[5]!r}（行全体: {line}）") from exc
+        raise ParseError(
+            f"耐性列の値の変換に失敗しました: {fields[5]!r}\n（行全体: {line}）"
+        ) from exc
 
     skills: list[ParsedSkill] = []
     for slot in range(SKILL_SLOT_COUNT):
@@ -82,8 +85,11 @@ def parse_result_log_line(line: str) -> ParsedResult:
         try:
             value = int(raw_value)
         except ValueError as exc:
+            # 空欄と「読めない値」を区別できるように表示する。repr の '' は
+            # ダブルクォート1つに見誤りやすいため使わない。
+            value_display = f"「{raw_value}」" if raw_value else "（空欄）"
             raise ParseError(
-                f"スキル値の変換に失敗しました: {raw_name}={raw_value!r}（行全体: {line}）"
+                f"スキル値の変換に失敗しました: {raw_name}={value_display}\n（行全体: {line}）"
             ) from exc
         # 実データは全角（例: ＫＯ術）で出力されるため、マスターの半角表記に合わせて正規化する
         normalized_name = unicodedata.normalize("NFKC", raw_name)

@@ -28,6 +28,15 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE results ADD COLUMN collected INTEGER NOT NULL DEFAULT 0")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_results_collected ON results(collected)")
 
+    # 取込時にエラー検出（読込失敗・幽霊行・欠番）を行ったか。機能追加前の既存バッチは0のまま。
+    batch_columns = {
+        row[1] for row in conn.execute("PRAGMA table_info(import_batches)").fetchall()
+    }
+    if "errors_analyzed" not in batch_columns:
+        conn.execute(
+            "ALTER TABLE import_batches ADD COLUMN errors_analyzed INTEGER NOT NULL DEFAULT 0"
+        )
+
     conn.commit()
 
 

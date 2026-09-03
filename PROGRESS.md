@@ -109,6 +109,23 @@ result_logのパース・スキル集合検索用ビットマスク計算・DB�
 - 検索結果一覧にゼブラストライプ（1行おきの背景色）、ページ送り時のスクロールアニメーション
   廃止など表示・操作性の改善
 - `tests/test_collection.py`
+- **取込時の重複行除去・欠番検出・エラー閲覧**（`app/core/importer.py`）:
+  - マクロのゼニーOCRが未更新フレームを読むと、同じ回数（＝ゼニー）で
+    `slot_add=-3, total_cost=-18`・スキル0の「幽霊行」が1本混入する。回数が前行と
+    連続で同値の行をグループ化し、1行だけ残して除去する。残す優先度は
+    ①スキルがある行 ②どれもスキル0なら`-3/-18`シグネチャの行を除去（それ以外を残す）
+    ③同点は最先。
+  - 除去後の回数列の内側の欠番を「飛ばされている回数」として検出（`_MAX_GAP_TO_REPORT`
+    を超える大欠落は外れ値として無視）。パース失敗行の回数はそちらで報告するため
+    欠番一覧からは除外。
+  - パース失敗行・欠番を`import_issues`テーブルに保存（`app/db/schema.sql`）。
+  - 履歴タブに「エラー」欄を追加（`app/ui/history_view.py`、`app/core/history.py`の
+    `fetch_batch_errors`・`BatchInfo.error_count`）。件数が0以外ならクリックで
+    ダイアログ表示（読み込みできなかった行／飛ばされている練成の2セクション。
+    飛ばされている練成は`練成回数：n　ゼニー：m`を1行ずつ表示し、ゼニーは欠番を挟む
+    前後の採用行から`step=(z1-z2)/(c2-c1)`で補間）。`delete_batch`で`import_issues`も連鎖削除。
+  - `import_batches.errors_analyzed`列を追加（`import_block`で1をセット）。この機能の
+    追加前に取り込まれたバッチは0のままで、エラー欄に「0」ではなく「—」を表示する。
 - **DB保存先を`%LOCALAPPDATA%\QuriousCraftingLog\qurious_crafting_log.db`に変更**
   （`app/main.py`）。従来はプロジェクト直下`data/`フォルダだったが、OneDrive等で
   デスクトップ/ドキュメント配下が自動同期される環境（特にexe配布先のPC）だと、

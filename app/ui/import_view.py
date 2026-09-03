@@ -225,8 +225,11 @@ def build_import_view(
 
         status_text.value = (
             f"取込完了: 成功 {summary.imported_count}件 / エラー {summary.error_count}件"
+            f"（読込失敗 {len(summary.errors)}件・欠番 {len(summary.skipped_results)}件）"
+            f" / 重複除外 {summary.dropped_duplicate_count}件"
             f"（バッチID: {summary.batch_id}）"
         )
+        status_text.value += "\n詳細は履歴タブの「エラー」欄から確認できます。"
         if summary.errors:
             preview = "、".join(f"{ln}行目: {msg}" for ln, msg in summary.errors[:5])
             status_text.value += f"\nエラー例: {preview}"

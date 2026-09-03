@@ -16,9 +16,9 @@ def conn(tmp_path):
 SAMPLE_TEXT = "\n".join(
     [
         build_row(zeny_count=5, skills=[("攻撃", 1), ("見切り", 1)]),
-        build_row(zeny_count=5, skills=[("攻撃", 2)]),
+        build_row(zeny_count=6, skills=[("攻撃", 2)]),
         "invalid,line",
-        build_row(zeny_count=5),
+        build_row(zeny_count=7),
     ]
 )
 
@@ -110,3 +110,165 @@ def test_import_block_stores_deficiency_and_resistance(conn):
         (summary.batch_id,),
     ).fetchone()
     assert row == (1, -5)
+
+
+# --- 重複行（幽霊行）の除去 ---
+
+
+def _zeny_counts(conn, batch_id):
+    return [
+        r[0]
+        for r in conn.execute(
+            "SELECT zeny_count FROM results WHERE batch_id = ? ORDER BY id", (batch_id,)
+        )
+    ]
+
+
+def test_dedupe_keeps_row_with_skills_over_empty_row(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=10, slot_add=1, total_cost=6, skills=[("攻撃", 1)]),
+            build_row(zeny_count=10, slot_add=-3, total_cost=-18),
+            build_row(zeny_count=11, skills=[("見切り", 1)]),
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.imported_count == 2
+    assert summary.dropped_duplicate_count == 1
+    rows = conn.execute(
+        "SELECT zeny_count, slot_add, total_cost FROM results WHERE batch_id = ? ORDER BY id",
+        (summary.batch_id,),
+    ).fetchall()
+    assert rows == [(10, 1, 6), (11, 0, 0)]
+
+
+def test_dedupe_drops_phantom_signature_when_both_rows_have_no_skills(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=20, slot_add=0, total_cost=3),
+            build_row(zeny_count=20, slot_add=-3, total_cost=-18),
+            build_row(zeny_count=21),
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.imported_count == 2
+    assert summary.dropped_duplicate_count == 1
+    rows = conn.execute(
+        "SELECT slot_add, total_cost FROM results WHERE batch_id = ? ORDER BY id",
+        (summary.batch_id,),
+    ).fetchall()
+    assert rows == [(0, 3), (0, 0)]  # -3/-18 の行が消え、もう片方が残る
+
+
+def test_dedupe_keeps_first_when_no_row_stands_out(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=30, slot_add=-3, total_cost=-18, resistance=1),
+            build_row(zeny_count=30, slot_add=-3, total_cost=-18, resistance=2),
+            build_row(zeny_count=31),
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.imported_count == 2
+    rows = conn.execute(
+        "SELECT print_resistance FROM results WHERE batch_id = ? ORDER BY id",
+        (summary.batch_id,),
+    ).fetchall()
+    assert rows == [(1,), (0,)]  # 先頭（resistance=1）が残る
+
+
+def test_dedupe_does_not_touch_non_consecutive_same_count(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=40, skills=[("攻撃", 1)]),
+            build_row(zeny_count=41, skills=[("攻撃", 1)]),
+            build_row(zeny_count=40, skills=[("攻撃", 1)]),
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.imported_count == 3
+    assert summary.dropped_duplicate_count == 0
+
+
+# --- 飛ばされている練成（欠番）の検出 ---
+
+
+def test_skipped_results_detected_and_persisted(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=100, zeny=9600),
+            build_row(zeny_count=101, zeny=9596),
+            build_row(zeny_count=104, zeny=9584),  # 102, 103 が欠番（1練成4ゼニー減）
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.skipped_results == [(102, 9592), (103, 9588)]
+    assert summary.error_count == 2  # 読込失敗0 + 欠番2
+
+    rows = conn.execute(
+        "SELECT zeny_count, detail FROM import_issues "
+        "WHERE batch_id = ? AND kind = 'skipped' ORDER BY zeny_count",
+        (summary.batch_id,),
+    ).fetchall()
+    assert rows == [(102, "9592"), (103, "9588")]
+
+
+def test_skipped_result_zeny_is_none_when_step_not_divisible(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=10, zeny=1000),
+            build_row(zeny_count=13, zeny=993),  # 差7は3で割り切れない
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.skipped_results == [(11, None), (12, None)]
+
+
+def test_phantom_removal_reveals_skipped_result(conn):
+    """幽霊行を挟んで実行が1つ抜けるケース（回数774→幽霊774→回数776 相当）。"""
+    text = "\n".join(
+        [
+            build_row(zeny_count=774, zeny=96903, skills=[("攻撃", 1)]),
+            build_row(zeny_count=774, zeny=96903, slot_add=-3, total_cost=-18),
+            build_row(zeny_count=776, zeny=96895, skills=[("攻撃", 1)]),
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.imported_count == 2
+    assert summary.dropped_duplicate_count == 1
+    assert summary.skipped_results == [(775, 96899)]
+
+
+def test_large_gap_is_ignored(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=1),
+            build_row(zeny_count=9999),  # OCR誤読相当の外れ値。欠番扱いにしない
+        ]
+    )
+    summary = import_block(conn, text)
+
+    assert summary.skipped_results == []
+
+
+# --- パースエラーの永続化 ---
+
+
+def test_unparsable_line_persisted_with_zeny_count(conn):
+    broken = "1248,95007,1,6,無,-2,火属性攻撃強化,,,,,,,,,,,,0"  # スキル値が空
+    text = "\n".join([build_row(zeny_count=1), broken, build_row(zeny_count=2)])
+    summary = import_block(conn, text)
+
+    assert summary.error_count == 1
+    row = conn.execute(
+        "SELECT kind, zeny_count FROM import_issues WHERE batch_id = ? AND kind = 'unparsable'",
+        (summary.batch_id,),
+    ).fetchone()
+    assert row == ("unparsable", 1248)

@@ -4,7 +4,7 @@
 ; （Inno Setup 6がインストールされていれば、通常 "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"）
 
 #define MyAppName "モンハン錬成結果 記録・検索"
-#define MyAppVersion "1.1"
+#define MyAppVersion "1.2"
 #define MyAppExeName "qurious-crafting-log.exe"
 #define MyBuildDir "..\build\windows"
 

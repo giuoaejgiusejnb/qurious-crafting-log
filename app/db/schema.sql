@@ -4,11 +4,25 @@ CREATE TABLE IF NOT EXISTS skills (
 );
 
 CREATE TABLE IF NOT EXISTS import_batches (
-    id          INTEGER PRIMARY KEY,
-    imported_at TEXT NOT NULL,  -- ISO8601
-    label       TEXT,
-    row_count   INTEGER NOT NULL
+    id              INTEGER PRIMARY KEY,
+    imported_at     TEXT NOT NULL,  -- ISO8601
+    label           TEXT,
+    row_count       INTEGER NOT NULL,
+    errors_analyzed INTEGER NOT NULL DEFAULT 0  -- エラー検出を実施したか。機能追加前のバッチは0
 );
+
+-- 取込時に検出した問題行。履歴タブの「エラー」欄で参照する。
+--   kind='unparsable': パースできなかった行（line_number=取込テキスト内の行番号）
+--   kind='skipped'   : 回数の欠番（zeny_count=飛ばされている回数）
+CREATE TABLE IF NOT EXISTS import_issues (
+    id          INTEGER PRIMARY KEY,
+    batch_id    INTEGER NOT NULL REFERENCES import_batches(id),
+    kind        TEXT NOT NULL,        -- 'unparsable' | 'skipped'
+    line_number INTEGER,              -- unparsable: 取込テキスト内の1始まり行番号
+    zeny_count  INTEGER,              -- unparsable: 判別できれば回数 / skipped: 欠番の回数
+    detail      TEXT                  -- unparsable: 理由文
+);
+CREATE INDEX IF NOT EXISTS idx_import_issues_batch_id ON import_issues(batch_id);
 
 CREATE TABLE IF NOT EXISTS results (
     id                 INTEGER PRIMARY KEY,

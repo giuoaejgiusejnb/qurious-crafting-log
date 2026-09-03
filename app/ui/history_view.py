@@ -3,7 +3,7 @@ from typing import Callable
 
 import flet as ft
 
-from app.core.history import delete_batch, list_batches
+from app.core.history import delete_batch, fetch_batch_errors, list_batches
 from app.db.connection import get_connection
 
 
@@ -56,6 +56,75 @@ def build_history_view(
         if on_batch_selected is not None:
             on_batch_selected(batch_id)
 
+    def show_error_dialog(batch_id: int) -> None:
+        conn = get_connection(db_path)
+        try:
+            errors = fetch_batch_errors(conn, batch_id)
+        finally:
+            conn.close()
+
+        unparsable_controls: list[ft.Control] = []
+        if not errors.unparsable:
+            unparsable_controls.append(ft.Text("なし", italic=True))
+        else:
+            for line_number, zeny_count, reason in errors.unparsable:
+                where = f"取込テキスト {line_number}行目"
+                if zeny_count is not None:
+                    where += f"（回数{zeny_count}）"
+                unparsable_controls.append(ft.Text(f"・{where}: {reason}", selectable=True))
+
+        skipped_controls: list[ft.Control] = []
+        if not errors.skipped:
+            skipped_controls.append(ft.Text("なし", italic=True))
+        else:
+            for count, zeny in errors.skipped:
+                zeny_disp = zeny if zeny is not None else "不明"
+                skipped_controls.append(
+                    ft.Text(f"練成回数：{count}　　ゼニー：{zeny_disp}", selectable=True)
+                )
+
+        content = ft.Column(
+            [
+                ft.Text("読み込みできなかった行", weight=ft.FontWeight.BOLD),
+                *unparsable_controls,
+                ft.Divider(),
+                ft.Text("飛ばされている練成", weight=ft.FontWeight.BOLD),
+                *skipped_controls,
+            ],
+            spacing=6,
+            scroll=ft.ScrollMode.AUTO,
+            tight=True,
+            width=560,
+            height=420,
+        )
+
+        dialog = ft.AlertDialog(
+            modal=True,
+            title=ft.Text(f"バッチ #{batch_id} のエラー"),
+            content=content,
+            actions=[ft.TextButton(content="閉じる", on_click=lambda e: page.pop_dialog())],
+        )
+        page.show_dialog(dialog)
+
+    def build_error_cell(batch) -> ft.Control:
+        if not batch.errors_analyzed:
+            # エラー欄の追加前に取り込まれたバッチ。記録が無いことを「—」で示す
+            return ft.Container(
+                content=ft.Text("—"),
+                width=70,
+                padding=ft.Padding.only(left=4),
+                tooltip="この機能の追加前に取り込まれたバッチのため、エラー記録がありません",
+            )
+        if batch.error_count == 0:
+            return ft.Container(content=ft.Text("0"), width=70, padding=ft.Padding.only(left=4))
+        return ft.Container(
+            content=ft.TextButton(
+                content=f"{batch.error_count}件",
+                on_click=lambda e, bid=batch.id: show_error_dialog(bid),
+            ),
+            width=70,
+        )
+
     def build_summary(batches) -> None:
         """総練成数・防具ごとの練成数を組み立てる（件数0の防具は表示しない）。"""
         total_count = sum(b.row_count for b in batches)
@@ -101,6 +170,7 @@ def build_history_view(
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
                 ft.Text("防具", width=140, weight=ft.FontWeight.BOLD),
                 ft.Text("件数", width=80, weight=ft.FontWeight.BOLD),
+                ft.Text("エラー", width=70, weight=ft.FontWeight.BOLD),
                 ft.Text("", width=60, weight=ft.FontWeight.BOLD),
             ]
         )
@@ -124,6 +194,7 @@ def build_history_view(
                             bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST if index % 2 == 1 else None,
                             padding=ft.Padding.symmetric(vertical=4, horizontal=4),
                         ),
+                        build_error_cell(batch),
                         ft.TextButton(
                             content="回収確認",
                             on_click=lambda e, bid=batch.id: (

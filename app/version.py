@@ -6,4 +6,4 @@ GitHub Releasesのタグ名と完全に一致させておくこと。起動時�
 合わせて更新すること。
 """
 
-APP_VERSION = "v1.1"
+APP_VERSION = "v1.2"
