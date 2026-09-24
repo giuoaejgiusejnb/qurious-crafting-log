@@ -55,7 +55,7 @@ def build_settings_view(
         def on_change(e: ft.Event[ft.Checkbox]) -> None:
             conn = get_connection(db_path)
             try:
-                set_update_check_enabled(conn, checkbox.value)
+                set_update_check_enabled(conn, bool(checkbox.value))
             finally:
                 conn.close()
 
@@ -112,13 +112,13 @@ def build_settings_view(
                 ],
             )
 
-            def on_create_skill_set_click(e: ft.Event[ft.TextButton]) -> None:
+            def on_create_skill_set_click(e: ft.Event[ft.Button]) -> None:
                 # 保存していない編集内容は、切り替え後にこの項目へ戻ってきた際に
                 # 破棄される（設定タブは項目切り替えのたびに読み直すため）。
                 switch_to_skill_set_manager()
 
-            create_skill_set_button = ft.TextButton(
-                content="＋新規作成",
+            create_skill_set_button = ft.Button(
+                content="スキル集合を管理する",
                 tooltip="「スキル集合管理」でスキル集合を作成・編集します",
                 on_click=on_create_skill_set_click,
             )
@@ -194,8 +194,8 @@ def build_settings_view(
 
             def do_save(e: ft.Event[ft.Button]) -> None:
                 try:
-                    min_cost = int(cost_min_dropdown.value)
-                    max_cost = int(cost_max_dropdown.value)
+                    min_cost = int(cost_min_dropdown.value or "")
+                    max_cost = int(cost_max_dropdown.value or "")
                 except (TypeError, ValueError):
                     status_text.value = "コストの指定が不正です"
                     page.update()
@@ -284,7 +284,13 @@ def build_settings_view(
 
             detail_area.content = ft.Column(
                 [
-                    ft.Row([skill_set_dropdown, create_skill_set_button, threshold_dropdown]),
+                    ft.Row(
+                        [
+                            skill_set_dropdown,
+                            threshold_dropdown,
+                            create_skill_set_button,
+                        ]
+                    ),
                     ft.Row([cost_min_dropdown, cost_max_dropdown]),
                     ft.Row([resistance_min_dropdown, resistance_max_dropdown]),
                     ft.Row([deficiency_dropdown]),
@@ -484,7 +490,7 @@ def build_settings_view(
         )
 
     # 設定タブ内の縦向きナビゲーション（NavigationRail）に並べる項目。
-    items: list[tuple[str, str, Callable[[], ft.Control]]] = [
+    items: list[tuple[str, ft.IconData, Callable[[], ft.Control]]] = [
         ("更新チェック", ft.Icons.SYSTEM_UPDATE_OUTLINED, build_update_check_content),
         (
             "防具ごとの検索初期設定",
@@ -531,12 +537,13 @@ def build_settings_view(
         page.update()
 
     def switch_to_skill_set_manager() -> None:
-        """検索タブ・防具ごとの検索初期設定の「＋新規作成」から呼ばれ、
+        """検索タブ・防具ごとの検索初期設定の「スキル集合を管理する」ボタンから呼ばれ、
         「スキル集合管理」に切り替える（main.py側で設定タブ自体への
         切り替えと合わせて呼ばれる想定）。
         """
         index = next(
-            i for i, (label, _icon, _build) in enumerate(items)
+            i
+            for i, (label, _icon, _build) in enumerate(items)
             if label == _SKILL_SET_MANAGER_LABEL
         )
         nav_rail.selected_index = index

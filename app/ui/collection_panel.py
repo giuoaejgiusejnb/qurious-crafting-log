@@ -36,7 +36,7 @@ def build_collection_panel(
             conn = get_connection(db_path)
             try:
                 try:
-                    set_collected(conn, result_id, batch_id, checkbox.value)
+                    set_collected(conn, result_id, batch_id, bool(checkbox.value))
                 except CollectionLimitError as exc:
                     checkbox.value = False
                     status_text.value = str(exc)

@@ -1,6 +1,7 @@
 import os
 import shutil
 from pathlib import Path
+from typing import cast
 
 import flet as ft
 
@@ -204,12 +205,15 @@ def main(page: ft.Page) -> None:
     # （PageUp/PageDownはどのコントロールも内部で使っていないため競合しない）。
     _PAGE_KEY_STEP = 400  # PageUp/PageDownキー1回あたりのスクロール量(px)
 
-    _tab_views = [
-        import_view,
-        search_view,
-        history_view,
-        settings_view,
-        contact_view,
+    # 各タブの中身は実際にはすべてft.Column/ft.Row（=ScrollableControl）だが、
+    # build_*_view側の戻り値の型はft.Control（各タブの中身の詳細を呼び出し側に
+    # 見せないための意図的な抽象化）なので、scroll_to()を呼べるようここでキャストする。
+    _tab_views: list[ft.ScrollableControl] = [
+        cast(ft.ScrollableControl, import_view),
+        cast(ft.ScrollableControl, search_view),
+        cast(ft.ScrollableControl, history_view),
+        cast(ft.ScrollableControl, settings_view),
+        cast(ft.ScrollableControl, contact_view),
     ]
 
     async def scroll_active_tab(delta: float) -> None:

@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from pathlib import Path
+from typing import Protocol
 
 import flet as ft
 
@@ -10,6 +11,7 @@ from app.core.search import (
     DEFAULT_SORT,
     RESISTANCE_OPTIONS,
     SearchParams,
+    count_results,
     fetch_distinct_import_dates,
     fetch_distinct_labels,
     fetch_skill_breakdown,
@@ -24,7 +26,7 @@ from app.ui.skills_display import build_skills_wrap
 _UNSELECTED = "__unselected__"
 _PAGE_SIZE = 200
 
-_DEFAULT_COST_MIN = "3"
+_DEFAULT_COST_MIN = "0"
 _DEFAULT_COST_MAX = "42"
 
 _BATCH_MODE = "batch"
@@ -68,12 +70,20 @@ def _load_import_date_options(db_path: Path) -> list[str]:
         conn.close()
 
 
+class SelectBatchAndSearch(Protocol):
+    """select_batch_and_searchの型。defaultsは省略可能（Callable[...]では表現できないため）。"""
+
+    def __call__(
+        self, batch_id: int, defaults: ArmorSearchDefaults | None = None
+    ) -> None: ...
+
+
 def build_search_view(
     page: ft.Page,
     db_path: Path,
     on_collected: Callable[[int], None] | None = None,
     on_request_create_skill_set: Callable[[], None] | None = None,
-) -> tuple[ft.Control, Callable[[], None], Callable[[int, ArmorSearchDefaults | None], None]]:
+) -> tuple[ft.Control, Callable[[], None], SelectBatchAndSearch]:
     """検索画面を構築する。
 
     戻り値は (画面コントロール, バッチ/防具/スキル集合の選択肢を最新化する関数,
@@ -83,7 +93,7 @@ def build_search_view(
     省略するとすべて既定値にリセットする（履歴タブから遷移時）。
     on_collectedは「回収」にチェックを入れたときにバッチIDを渡して呼ばれ、
     回収確認サイドパネルを自動的に開くのに使う。
-    on_request_create_skill_setは「＋新規作成」ボタン押下時に呼ばれ、
+    on_request_create_skill_setは「スキル集合を管理する」ボタン押下時に呼ばれ、
     設定タブの「スキル集合管理」への切り替えに使う（スキル集合自体の
     作成・編集・削除はそちらに一本化されている）。
     """
@@ -150,12 +160,12 @@ def build_search_view(
         on_click=open_current_selection_detail,
     )
 
-    def on_create_skill_set_click(e: ft.Event[ft.TextButton]) -> None:
+    def on_create_skill_set_click(e: ft.Event[ft.Button]) -> None:
         if on_request_create_skill_set is not None:
             on_request_create_skill_set()
 
-    create_skill_set_button = ft.TextButton(
-        content="＋新規作成",
+    create_skill_set_button = ft.Button(
+        content="スキル集合を管理する",
         tooltip="設定タブの「スキル集合管理」でスキル集合を作成・編集します",
         on_click=on_create_skill_set_click,
     )
@@ -331,7 +341,9 @@ def build_search_view(
 
     def condition_heading(text: str) -> ft.Control:
         # 検索ボタンほどではないが、他の項目より目に留まるよう色と大きさをつける
-        return ft.Text(f"・{text}", size=15, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700)
+        return ft.Text(
+            f"・{text}", size=15, weight=ft.FontWeight.BOLD, color=ft.Colors.BLUE_700
+        )
 
     # --- 検索条件（コスト/防具/スキル）の折りたたみ ---
     condition_section = ft.Column(
@@ -345,12 +357,12 @@ def build_search_view(
                 [
                     current_set_dropdown,
                     current_set_detail_button,
-                    create_skill_set_button,
                     ft.Text("に含まれるスキルが"),
                     threshold_dropdown,
                     ft.Text("個以上含まれる結果を検索"),
                 ]
             ),
+            create_skill_set_button,
             condition_heading("スキル欠け"),
             ft.Row([deficiency_dropdown]),
             condition_heading("耐性"),
@@ -399,8 +411,20 @@ def build_search_view(
     prev_buttons = (prev_button_top, prev_button_bottom)
     next_buttons = (next_button_top, next_button_bottom)
 
+    # 件数を指定して、それが含まれるページへ直接移動する（例: 1230と入力すると
+    # 1201〜1400件目のページを表示）。1ページ200件（_PAGE_SIZE）区切りなので、
+    # (件数-1)を_PAGE_SIZEで割った商がそのままページ番号（0始まり）になる。
+    jump_to_count_field = ft.TextField(label="件数で移動", width=140, disabled=True)
+    jump_to_count_button = ft.Button(content="移動", disabled=True)
+
     current_offset = 0
     has_next_page = False
+    total_count = 0
+    # 件数指定でジャンプした際、その件数（1始まりの通し番号）を保持し、
+    # render_resultsで該当行だけ色を変えて目立たせるのに使う。
+    # 通常の検索・バッチ選択では都度クリアする（ページ送りでは維持し、
+    # ジャンプ先のページに戻ってくれば再度ハイライトされる）。
+    highlighted_count: int | None = None
 
     def set_busy(busy: bool) -> None:
         search_button.disabled = busy
@@ -408,6 +432,8 @@ def build_search_view(
             btn.disabled = busy or current_offset <= 0
         for btn in next_buttons:
             btn.disabled = busy or not has_next_page
+        jump_to_count_field.disabled = busy or total_count <= 0
+        jump_to_count_button.disabled = busy or total_count <= 0
         progress_bar.visible = busy
         page.update()
 
@@ -469,6 +495,12 @@ def build_search_view(
         results_list.controls.append(ft.Divider(height=1))
 
         for index, row in enumerate(rows):
+            # 件数指定でジャンプした場合、その件数（通し番号）に当たる行だけ
+            # 色を変えて目立たせる（ゼブラストライプより優先）。
+            is_highlighted = (
+                highlighted_count is not None
+                and current_offset + index + 1 == highlighted_count
+            )
             results_list.controls.append(
                 ft.Container(
                     content=ft.Row(
@@ -491,9 +523,14 @@ def build_search_view(
                         ]
                     ),
                     # ゼブラストライプ: 1行おきに背景色を変えて行を目で追いやすくする
-                    bgcolor=ft.Colors.SURFACE_CONTAINER_HIGHEST
-                    if index % 2 == 1
-                    else None,
+                    # （件数指定でジャンプした行はそれより目立つ色で上書きする）
+                    bgcolor=(
+                        ft.Colors.AMBER_200
+                        if is_highlighted
+                        else ft.Colors.SURFACE_CONTAINER_HIGHEST
+                        if index % 2 == 1
+                        else None
+                    ),
                     padding=ft.Padding.symmetric(vertical=2, horizontal=4),
                 )
             )
@@ -514,15 +551,21 @@ def build_search_view(
 
         min_resistance = (
             int(resistance_min_dropdown.value)
-            if resistance_min_dropdown.value and resistance_min_dropdown.value != _UNSELECTED
+            if resistance_min_dropdown.value
+            and resistance_min_dropdown.value != _UNSELECTED
             else None
         )
         max_resistance = (
             int(resistance_max_dropdown.value)
-            if resistance_max_dropdown.value and resistance_max_dropdown.value != _UNSELECTED
+            if resistance_max_dropdown.value
+            and resistance_max_dropdown.value != _UNSELECTED
             else None
         )
-        if min_resistance is not None and max_resistance is not None and min_resistance > max_resistance:
+        if (
+            min_resistance is not None
+            and max_resistance is not None
+            and min_resistance > max_resistance
+        ):
             status_text.value = "「耐性以上」は「耐性以下」より大きくできません"
             page.update()
             return None
@@ -582,7 +625,8 @@ def build_search_view(
             max_total_cost=max_total_cost,
             has_deficiency=(
                 int(deficiency_dropdown.value)
-                if deficiency_dropdown.value and deficiency_dropdown.value != _UNSELECTED
+                if deficiency_dropdown.value
+                and deficiency_dropdown.value != _UNSELECTED
                 else None
             ),
             min_resistance=min_resistance,
@@ -599,7 +643,7 @@ def build_search_view(
         await view.scroll_to(scroll_key=_SCROLL_ANCHOR_KEY, duration=0)
 
     def run_search_page(offset: int) -> None:
-        nonlocal current_offset, has_next_page
+        nonlocal current_offset, has_next_page, total_count
 
         params = build_current_params(offset)
         if params is None:
@@ -615,14 +659,16 @@ def build_search_view(
             has_next_page = len(rows) > _PAGE_SIZE
             rows = rows[:_PAGE_SIZE]
             breakdown = fetch_skill_breakdown(conn, [r.id for r in rows])
+            total_count = count_results(conn, params)
         finally:
             conn.close()
 
         current_offset = offset
         status_text.value = (
             f"検索結果: {current_offset + 1}〜{current_offset + len(rows)}件目を表示中"
+            f"（全{total_count}件）"
             if rows
-            else "検索結果: 該当する結果はありません"
+            else f"検索結果: 該当する結果はありません（全{total_count}件）"
         )
         page.update()
         render_results(rows, breakdown)
@@ -630,6 +676,8 @@ def build_search_view(
         page.run_task(scroll_to_anchor)
 
     def on_search_click(e: ft.Event[ft.Button]) -> None:
+        nonlocal highlighted_count
+        highlighted_count = None  # 新規の検索では前回のジャンプ先ハイライトを消す
         page.run_thread(run_search_page, 0)
 
     def on_prev_click(e: ft.Event[ft.Button]) -> None:
@@ -637,6 +685,38 @@ def build_search_view(
 
     def on_next_click(e: ft.Event[ft.Button]) -> None:
         page.run_thread(run_search_page, current_offset + _PAGE_SIZE)
+
+    def do_jump_to_count() -> None:
+        """入力された件数（1始まりの通し番号）が含まれるページへ移動する。
+
+        例: 1230と入力すると、1ページ200件区切りの1201〜1400件目のページを表示する。
+        """
+        nonlocal highlighted_count
+
+        raw = (jump_to_count_field.value or "").strip()
+        try:
+            count_value = int(raw)
+        except ValueError:
+            status_text.value = "件数は半角数字で入力してください"
+            page.update()
+            return
+        if count_value < 1:
+            status_text.value = "件数は1以上の数値を入力してください"
+            page.update()
+            return
+
+        highlighted_count = count_value
+        target_offset = ((count_value - 1) // _PAGE_SIZE) * _PAGE_SIZE
+        page.run_thread(run_search_page, target_offset)
+
+    def on_jump_click(e: ft.Event[ft.Button]) -> None:
+        do_jump_to_count()
+
+    def on_jump_submit(e: ft.Event[ft.TextField]) -> None:
+        do_jump_to_count()
+
+    jump_to_count_button.on_click = on_jump_click
+    jump_to_count_field.on_submit = on_jump_submit
 
     search_button.on_click = on_search_click
     for btn in prev_buttons:
@@ -670,17 +750,26 @@ def build_search_view(
         スキル集合をその内容で復元する。指定されない場合（履歴タブからの
         遷移時）は、従来通りすべて既定値にリセットする。
         """
+        nonlocal highlighted_count
+        highlighted_count = None  # 他タブからの遷移では前回のジャンプ先ハイライトを消す
+
         if defaults is not None:
             cost_min_dropdown.value = str(defaults.min_total_cost)
             cost_max_dropdown.value = str(defaults.max_total_cost)
             resistance_min_dropdown.value = (
-                str(defaults.min_resistance) if defaults.min_resistance is not None else _UNSELECTED
+                str(defaults.min_resistance)
+                if defaults.min_resistance is not None
+                else _UNSELECTED
             )
             resistance_max_dropdown.value = (
-                str(defaults.max_resistance) if defaults.max_resistance is not None else _UNSELECTED
+                str(defaults.max_resistance)
+                if defaults.max_resistance is not None
+                else _UNSELECTED
             )
             deficiency_dropdown.value = (
-                str(defaults.has_deficiency) if defaults.has_deficiency is not None else _UNSELECTED
+                str(defaults.has_deficiency)
+                if defaults.has_deficiency is not None
+                else _UNSELECTED
             )
             threshold_dropdown.value = str(defaults.threshold)
             sort_dropdown.value = defaults.sort
@@ -688,7 +777,9 @@ def build_search_view(
             if defaults.skill_set_name:
                 conn = get_connection(db_path)
                 try:
-                    skill_set_exists = get_skill_set(conn, defaults.skill_set_name) is not None
+                    skill_set_exists = (
+                        get_skill_set(conn, defaults.skill_set_name) is not None
+                    )
                 finally:
                     conn.close()
                 if skill_set_exists:
@@ -711,6 +802,7 @@ def build_search_view(
         label_dropdown.value = _UNSELECTED
         date_from_dropdown.value = _UNSELECTED
         date_to_dropdown.value = _UNSELECTED
+        jump_to_count_field.value = ""
         condition_section.visible = False
         condition_toggle_button.content = "検索条件を変更"
 
@@ -745,7 +837,7 @@ def build_search_view(
             ft.Row([search_button]),
             progress_bar,
             status_text,
-            ft.Row([prev_button_top, next_button_top]),
+            ft.Row([prev_button_top, next_button_top, jump_to_count_field, jump_to_count_button]),
             ft.Divider(),
             results_list,
             ft.Divider(),

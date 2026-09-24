@@ -121,7 +121,8 @@ def build_import_view(
         options_container.content = build_options_layout()
 
     def on_selection_change(e: ft.Event[ft.RadioGroup]) -> None:
-        persist_last_selection(label_radio_group.value)
+        if label_radio_group.value is not None:
+            persist_last_selection(label_radio_group.value)
 
     label_radio_group = ft.RadioGroup(value=last_selection, content=options_container)
     label_radio_group.on_change = on_selection_change

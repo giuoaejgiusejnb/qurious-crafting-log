@@ -153,6 +153,7 @@ def import_block(
         (imported_at, label, len(results)),
     )
     batch_id = cur.lastrowid
+    assert batch_id is not None  # INSERT直後なので必ず採番されている
 
     if errors:
         conn.executemany(

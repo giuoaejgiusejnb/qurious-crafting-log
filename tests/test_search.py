@@ -5,6 +5,7 @@ import pytest
 from app.core.importer import import_block
 from app.core.search import (
     SearchParams,
+    count_results,
     fetch_distinct_import_dates,
     fetch_distinct_labels,
     fetch_skill_breakdown,
@@ -130,6 +131,31 @@ def test_search_default_sort_is_craft_order(conn):
 
     # 既定の並びは練成順（新しいバッチから、バッチ内は練成回数昇順）
     assert [r.zeny_count for r in rows] == [3, 2, 1]
+
+
+def test_count_results_ignores_limit_and_offset(conn):
+    text = "\n".join(build_row(zeny_count=i, skills=[("攻撃", 2)]) for i in range(10))
+    import_block(conn, text)
+    params = SearchParams(allowed_skill_ids=_allowed_ids(conn), threshold=2, limit=3, offset=1)
+
+    assert count_results(conn, params) == 10
+
+
+def test_count_results_applies_the_same_filters_as_search_results(conn):
+    text = "\n".join(
+        [
+            build_row(zeny_count=1, total_cost=100, skills=[("攻撃", 2)]),
+            build_row(zeny_count=2, total_cost=900, skills=[("攻撃", 2)]),
+            build_row(zeny_count=3, total_cost=900, skills=[("見切り", 1)]),  # しきい値未達
+        ]
+    )
+    import_block(conn, text)
+    params = SearchParams(
+        allowed_skill_ids=_allowed_ids(conn), threshold=2, min_total_cost=500
+    )
+
+    assert count_results(conn, params) == 1
+    assert len(search_results(conn, params)) == 1
 
 
 def test_search_respects_limit(conn):

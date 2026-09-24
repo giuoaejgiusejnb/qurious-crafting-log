@@ -54,7 +54,7 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
             selected_summary_container.content = ft.Text("スキル未選択", italic=True)
             return
 
-        chips = [
+        chips: list[ft.Control] = [
             ft.Container(
                 content=ft.Text(name, size=13),
                 bgcolor=ft.Colors.BLUE_100,
@@ -130,7 +130,13 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
         registered_names = set(_load_skill_names(db_path))
         extra_names = sorted(registered_names - ALL_MASTER_SKILL_NAMES)
         if extra_names:
-            sections.append(build_group_header("その他（マスター未登録）", extra_names))
+            sections.append(build_group_header("その他", extra_names))
+            sections.append(
+                ft.Text(
+                    "※アプリ作成者が想定していないスキルです\n　NXの表記ゆれなど用",
+                    size=12,
+                )
+            )
             sections.append(build_checkbox_rows(extra_names, previously_selected))
 
         return ft.Column(sections, spacing=8)
@@ -143,14 +149,14 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
             checkbox.value = False
         update_selected_summary()
 
-    def clear_skill_selection(e: ft.Event[ft.TextButton]) -> None:
+    def clear_skill_selection(e: ft.Event[ft.Button]) -> None:
         do_clear_selection()
         page.update()
 
     async def do_scroll_to_top() -> None:
-        await content.scroll_to(scroll_key=_SCROLL_ANCHOR_KEY, duration=0)
+        await scrollable_content.scroll_to(scroll_key=_SCROLL_ANCHOR_KEY, duration=0)
 
-    def scroll_to_top(e: ft.Event[ft.TextButton]) -> None:
+    def scroll_to_top(e: ft.Event[ft.Button]) -> None:
         page.run_task(do_scroll_to_top)
 
     def do_save_skill_set(name: str, selected_names: list[str]) -> None:
@@ -228,7 +234,9 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
         for skill_name, checkbox in skill_checkboxes.items():
             checkbox.value = skill_name in names_set
         update_selected_summary()
-        save_set_status_text.value = f"「{name}」の内容をチェックボックスに読み込みました"
+        save_set_status_text.value = (
+            f"「{name}」の内容をチェックボックスに読み込みました"
+        )
         page.update()
 
     def open_skill_set_detail(name: str) -> None:
@@ -318,7 +326,9 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
                                 overflow=ft.TextOverflow.ELLIPSIS,
                             ),
                             tooltip=name,  # 省略されても元の名前が分かるように
-                            on_click=lambda e, n=name: load_named_skill_set_into_checklist(n),
+                            on_click=lambda e, n=name: (
+                                load_named_skill_set_into_checklist(n)
+                            ),
                         ),
                         ft.IconButton(
                             icon=ft.Icons.INFO_OUTLINE,
@@ -350,7 +360,7 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
     refresh_checklist()
     update_selected_summary()
 
-    content = ft.Column(
+    scrollable_content = ft.Column(
         [
             ft.Text(
                 "スキル集合管理",
@@ -360,7 +370,7 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
             ),
             ft.Text(
                 "検索タブ・防具ごとの検索初期設定で使う「スキル集合」を作成・編集・"
-                "削除できます。名前をクリックすると内容をチェックボックスに読み込んで"
+                "削除できます。\n名前をクリックすると内容をチェックボックスに読み込んで"
                 "編集できます（上書き保存も新規作成と同じ手順です）。"
             ),
             ft.Text("保存済みのスキル集合", weight=ft.FontWeight.BOLD),
@@ -369,12 +379,6 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
             ft.Text("選択中のスキル", weight=ft.FontWeight.BOLD),
             selected_summary_container,
             ft.Row([save_set_name_field, save_set_button]),
-            ft.Row(
-                [
-                    ft.TextButton(content="一番上に戻る", on_click=scroll_to_top),
-                    ft.TextButton(content="選択をクリア", on_click=clear_skill_selection),
-                ]
-            ),
             save_set_status_text,
             ft.Divider(),
             checklist_container,
@@ -383,4 +387,13 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
         scroll=ft.ScrollMode.AUTO,
         expand=True,
     )
-    return content
+    # 「選択をすべてクリア」「一覧の先頭までスクロール」はスクロール領域の外に固定し、
+    # チェックボックス一覧をどれだけ下にスクロールしていても常に押せるようにする。
+    footer_buttons: list[ft.Control] = [
+        ft.Button("選択をすべてクリア", on_click=clear_skill_selection),
+        ft.Button("一覧の先頭までスクロール", on_click=scroll_to_top),
+    ]
+    footer_actions_row = ft.Row(
+        footer_buttons, alignment=ft.MainAxisAlignment.SPACE_BETWEEN
+    )
+    return ft.Column([scrollable_content, footer_actions_row], expand=True)

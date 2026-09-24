@@ -15,7 +15,7 @@ DEFAULT_SORT = "craft_order"
 
 # 検索UIのコスト/耐性ドロップダウンの選択肢。設定タブ（防具ごとの初期設定）
 # でも同じ選択肢を使うため、ここに集約する。
-COST_OPTIONS = [str(n) for n in range(3, 43, 3)]
+COST_OPTIONS = [str(n) for n in range(0, 43, 3)]
 RESISTANCE_OPTIONS = [str(n) for n in range(-9, 10)]
 
 
@@ -29,7 +29,9 @@ class SearchParams:
     label: str | None = None
     min_total_cost: int | None = None
     max_total_cost: int | None = None
-    has_deficiency: int | None = None  # 0=無いもののみ, 1=有るもののみ, None=絞り込みなし
+    has_deficiency: int | None = (
+        None  # 0=無いもののみ, 1=有るもののみ, None=絞り込みなし
+    )
     min_resistance: int | None = None
     max_resistance: int | None = None
     sort: str = DEFAULT_SORT
@@ -42,7 +44,9 @@ class SearchParams:
                 f"threshold must be between {MIN_THRESHOLD} and {MAX_THRESHOLD}, got {self.threshold}"
             )
         if self.sort not in SORT_OPTIONS:
-            raise ValueError(f"sort must be one of {sorted(SORT_OPTIONS)}, got {self.sort!r}")
+            raise ValueError(
+                f"sort must be one of {sorted(SORT_OPTIONS)}, got {self.sort!r}"
+            )
 
 
 @dataclass
@@ -67,26 +71,20 @@ _SELECT_COLUMNS = (
 )
 
 
-def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[SearchResultRow]:
-    """resultsを検索する（最大 params.limit 件）。並び順はparams.sort（SORT_OPTIONS参照、既定は新しい順）。
+def _build_filtered_from_and_where(params: SearchParams) -> tuple[str, list[object]]:
+    """スキル集合・コスト・耐性などの絞り込み条件から、FROM句〜WHERE句を組み立てる。
 
-    許可スキル集合を指定した場合: そのうちresultが持つ正の値の合計（＋2は同じスキル2個分として
-    加算）がparams.threshold以上のもののみを対象とする。マイナス値（スキル欠け）は合計に
-    含めない（プラスのスキルと相殺されない）。許可集合に含まれないスキルを併せ持っていても
-    除外しない（除外はしきい値のみで判定する）。
-    result_skills.skill_id にインデックスを張っているため、許可スキル数が少数
-    （〜10種類程度）であれば、全件走査ではなくインデックス経由の絞り込みになり高速。
-
-    許可スキル集合を指定しない場合: スキル条件なしで、他の絞り込み条件のみでresultsを検索する。
+    search_results（一覧取得）とcount_results（全件数取得）の両方で同じ絞り込み
+    条件を使うため、共通部分をここに切り出している。戻り値のqueryは
+    "FROM ... WHERE 1 = 1 AND ..." までを含み、SELECT句・ORDER BY・
+    LIMIT/OFFSETは呼び出し側で付け足す。
     """
-    select_columns = ", ".join(f"r.{c.strip()}" for c in _SELECT_COLUMNS.split(","))
     query_args: list[object] = []
 
     if params.allowed_skill_ids:
         placeholders = ",".join("?" * len(params.allowed_skill_ids))
         query_args.extend(params.allowed_skill_ids)
         query = f"""
-            SELECT {select_columns}
             FROM (
                 SELECT result_id
                 FROM result_skills
@@ -99,8 +97,7 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
         """
         query_args.append(params.threshold)
     else:
-        query = f"""
-            SELECT {select_columns}
+        query = """
             FROM results r
             WHERE 1 = 1
         """
@@ -133,12 +130,42 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
         query += " AND r.print_resistance <= ?"
         query_args.append(params.max_resistance)
 
+    return query, query_args
+
+
+def search_results(
+    conn: sqlite3.Connection, params: SearchParams
+) -> list[SearchResultRow]:
+    """resultsを検索する（最大 params.limit 件）。並び順はparams.sort（SORT_OPTIONS参照、既定は新しい順）。
+
+    許可スキル集合を指定した場合: そのうちresultが持つ正の値の合計（＋2は同じスキル2個分として
+    加算）がparams.threshold以上のもののみを対象とする。マイナス値（スキル欠け）は合計に
+    含めない（プラスのスキルと相殺されない）。許可集合に含まれないスキルを併せ持っていても
+    除外しない（除外はしきい値のみで判定する）。
+    result_skills.skill_id にインデックスを張っているため、許可スキル数が少数
+    （〜10種類程度）であれば、全件走査ではなくインデックス経由の絞り込みになり高速。
+
+    許可スキル集合を指定しない場合: スキル条件なしで、他の絞り込み条件のみでresultsを検索する。
+    """
+    select_columns = ", ".join(f"r.{c.strip()}" for c in _SELECT_COLUMNS.split(","))
+    from_and_where, query_args = _build_filtered_from_and_where(params)
+
+    query = f"SELECT {select_columns} {from_and_where}"
     query += f" ORDER BY {SORT_OPTIONS[params.sort]} LIMIT ? OFFSET ?"
-    query_args.append(params.limit)
-    query_args.append(params.offset)
+    query_args = [*query_args, params.limit, params.offset]
 
     rows = conn.execute(query, query_args).fetchall()
     return [SearchResultRow(*row) for row in rows]
+
+
+def count_results(conn: sqlite3.Connection, params: SearchParams) -> int:
+    """paramsの絞り込み条件（sort/limit/offsetは無視）に合致する件数を返す。
+
+    検索タブでの「全件数」表示や、件数を指定してのページ移動に使う。
+    """
+    from_and_where, query_args = _build_filtered_from_and_where(params)
+    row = conn.execute(f"SELECT COUNT(*) {from_and_where}", query_args).fetchone()
+    return row[0]
 
 
 def fetch_skill_breakdown(
