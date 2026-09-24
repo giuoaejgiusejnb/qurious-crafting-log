@@ -25,14 +25,20 @@ from app.core.skill_colors import (
 from app.core.skill_sets import list_skill_set_names
 from app.core.update_check import is_update_check_enabled, set_update_check_enabled
 from app.db.connection import get_connection
+from app.ui.skill_set_manager import build_skill_set_manager_content
 
 _UNSELECTED = "__unselected__"
+_SKILL_SET_MANAGER_LABEL = "スキル集合管理"
 
 
 def build_settings_view(
     page: ft.Page, db_path: Path
-) -> tuple[ft.Control, Callable[[], None]]:
-    """設定画面を構築する。戻り値は (画面コントロール, 表示中の項目を読み直す関数)。
+) -> tuple[ft.Control, Callable[[], None], Callable[[], None]]:
+    """設定画面を構築する。
+
+    戻り値は (画面コントロール, 表示中の項目を読み直す関数,
+    「スキル集合管理」に切り替える関数)。最後の関数は検索タブの
+    「＋新規作成」ボタンから main.py 経由で呼ばれる。
 
     左側に縦向きのナビゲーション（NavigationRail）、右側に選択中の項目の
     内容を表示する2カラム構成。
@@ -104,6 +110,17 @@ def build_settings_view(
                     ft.DropdownOption(key=_UNSELECTED, text="（未選択）"),
                     *[ft.DropdownOption(key=n, text=n) for n in skill_set_names],
                 ],
+            )
+
+            def on_create_skill_set_click(e: ft.Event[ft.TextButton]) -> None:
+                # 保存していない編集内容は、切り替え後にこの項目へ戻ってきた際に
+                # 破棄される（設定タブは項目切り替えのたびに読み直すため）。
+                switch_to_skill_set_manager()
+
+            create_skill_set_button = ft.TextButton(
+                content="＋新規作成",
+                tooltip="「スキル集合管理」でスキル集合を作成・編集します",
+                on_click=on_create_skill_set_click,
             )
             threshold_dropdown = ft.Dropdown(
                 label="必要な個数（1〜4）",
@@ -267,7 +284,7 @@ def build_settings_view(
 
             detail_area.content = ft.Column(
                 [
-                    ft.Row([skill_set_dropdown, threshold_dropdown]),
+                    ft.Row([skill_set_dropdown, create_skill_set_button, threshold_dropdown]),
                     ft.Row([cost_min_dropdown, cost_max_dropdown]),
                     ft.Row([resistance_min_dropdown, resistance_max_dropdown]),
                     ft.Row([deficiency_dropdown]),
@@ -474,6 +491,11 @@ def build_settings_view(
             ft.Icons.TUNE_OUTLINED,
             build_armor_defaults_content,
         ),
+        (
+            _SKILL_SET_MANAGER_LABEL,
+            ft.Icons.LIST_ALT_OUTLINED,
+            lambda: build_skill_set_manager_content(page, db_path),
+        ),
         ("スキル表示色", ft.Icons.PALETTE_OUTLINED, build_skill_color_content),
         ("バックアップ", ft.Icons.SAVE_OUTLINED, build_backup_content),
     ]
@@ -501,10 +523,24 @@ def build_settings_view(
 
     def refresh() -> None:
         """表示中の項目を読み直す。設定タブがアプリの他タブから選ばれるたびに
-        main.py側から呼ばれ、検索タブでのスキル集合の作成・削除や取込タブでの
-        防具追加など、他タブでの変更を反映する（ページ接続後にのみ呼ばれる想定）。
+        main.py側から呼ばれ、取込タブでの防具追加や「スキル集合管理」での
+        変更など、他タブ・他項目での変更を反映する（ページ接続後にのみ
+        呼ばれる想定）。
         """
         show_item(nav_rail.selected_index or 0)
+        page.update()
+
+    def switch_to_skill_set_manager() -> None:
+        """検索タブ・防具ごとの検索初期設定の「＋新規作成」から呼ばれ、
+        「スキル集合管理」に切り替える（main.py側で設定タブ自体への
+        切り替えと合わせて呼ばれる想定）。
+        """
+        index = next(
+            i for i, (label, _icon, _build) in enumerate(items)
+            if label == _SKILL_SET_MANAGER_LABEL
+        )
+        nav_rail.selected_index = index
+        show_item(index)
         page.update()
 
     view = ft.Row(
@@ -515,4 +551,4 @@ def build_settings_view(
         ],
         expand=True,
     )
-    return view, refresh
+    return view, refresh, switch_to_skill_set_manager

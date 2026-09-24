@@ -3,7 +3,7 @@ from pathlib import Path
 
 import flet as ft
 
-from app.core.armor_defaults import ArmorSearchDefaults, list_armors_using_skill_set
+from app.core.armor_defaults import ArmorSearchDefaults
 from app.core.collection import CollectionLimitError, set_collected
 from app.core.search import (
     COST_OPTIONS,
@@ -16,25 +16,11 @@ from app.core.search import (
     search_results,
 )
 from app.core.skill_colors import get_negative_skill_color, get_positive_skill_color
-from app.core.skill_master import ALL_MASTER_SKILL_NAMES, SKILL_MASTER
 from app.core.skill_registry import SkillRegistry
-from app.core.skill_sets import (
-    delete_skill_set,
-    get_skill_set,
-    list_skill_set_names,
-    save_skill_set,
-)
+from app.core.skill_sets import get_skill_set, list_skill_set_names
 from app.db.connection import get_connection
 from app.ui.skills_display import build_skills_wrap
 
-_SKILLS_PER_ROW = 5
-_SUMMARY_CHIPS_PER_ROW = 8
-_SAVED_SETS_PER_ROW = 3
-# 名前が極端に長くても詳細/削除ボタンが画面外に押し出されないよう、
-# 名前部分の表示幅を固定し、それより長い名前は省略記号で切り詰める。
-# 1エントリはボタンの内側余白・アイコン2つ分を含めると名前の表示幅より
-# だいぶ広くなるため、ダイアログの幅（760px）に収まるよう余裕を持たせている。
-_SAVED_SET_NAME_WIDTH = 100
 _UNSELECTED = "__unselected__"
 _PAGE_SIZE = 200
 
@@ -50,15 +36,6 @@ _DATE_RANGE_MODE = "date_range"
 # 単なる文字列ではなくft.ScrollKeyを使う必要がある
 # （通常のkey（ValueKey相当）はスクロール先指定用としては認識されない）。
 _SCROLL_ANCHOR_KEY = ft.ScrollKey("search_view_scroll_anchor")
-
-
-def _load_skill_names(db_path: Path) -> list[str]:
-    conn = get_connection(db_path)
-    try:
-        rows = conn.execute("SELECT name FROM skills ORDER BY name").fetchall()
-        return [r[0] for r in rows]
-    finally:
-        conn.close()
 
 
 def _load_label_options(db_path: Path) -> list[str]:
@@ -95,24 +72,21 @@ def build_search_view(
     page: ft.Page,
     db_path: Path,
     on_collected: Callable[[int], None] | None = None,
+    on_request_create_skill_set: Callable[[], None] | None = None,
 ) -> tuple[ft.Control, Callable[[], None], Callable[[int, ArmorSearchDefaults | None], None]]:
     """検索画面を構築する。
 
-    戻り値は (画面コントロール, バッチ/防具選択肢を最新化する関数,
+    戻り値は (画面コントロール, バッチ/防具/スキル集合の選択肢を最新化する関数,
     指定バッチを対象に検索を実行する関数)。
     最後の関数は取込タブ・履歴タブからの連携に使う。第2引数（防具ごとの
     検索初期設定）を渡すとその内容を復元し（取込タブから遷移時）、
     省略するとすべて既定値にリセットする（履歴タブから遷移時）。
     on_collectedは「回収」にチェックを入れたときにバッチIDを渡して呼ばれ、
     回収確認サイドパネルを自動的に開くのに使う。
+    on_request_create_skill_setは「＋新規作成」ボタン押下時に呼ばれ、
+    設定タブの「スキル集合管理」への切り替えに使う（スキル集合自体の
+    作成・編集・削除はそちらに一本化されている）。
     """
-    # skill_checkboxesは「検索するスキル集合を作成」ダイアログ内だけで完結する
-    # 作業領域（スクラッチパッド）。ここでの操作（チェックの切り替え、一覧からの
-    # 読み込みなど）はcurrent_set_dropdownには一切影響しない。検索に実際に使う
-    # スキル集合はcurrent_set_dropdownの選択のみで決まり、「保存」または
-    # （選択中の集合が）「削除」された場合にのみドロップダウンが変わる。
-    skill_checkboxes: dict[str, ft.Checkbox] = {}
-    selected_summary_container = ft.Container()
     current_set_dropdown = ft.Dropdown(
         label="使用するスキル集合",
         width=280,
@@ -125,8 +99,9 @@ def build_search_view(
 
         現在の選択値が引き続き有効（未選択、または存在する保存済み集合名）で
         あればそのまま維持し、そうでなくなっていれば（選択中だった集合が
-        削除された場合など）未選択に戻す。他の絞り込み用ドロップダウン
-        （バッチ・防具など）と同じ「無効になっていたらリセット」方式。
+        設定タブの「スキル集合管理」で削除された場合など）未選択に戻す。
+        他の絞り込み用ドロップダウン（バッチ・防具など）と同じ
+        「無効になっていたらリセット」方式。
         """
         conn = get_connection(db_path)
         try:
@@ -142,217 +117,8 @@ def build_search_view(
         if current_set_dropdown.value not in {opt.key for opt in options}:
             current_set_dropdown.value = _UNSELECTED
 
-    def update_selected_summary() -> None:
-        selected = [
-            name for name, checkbox in skill_checkboxes.items() if checkbox.value
-        ]
-        if not selected:
-            selected_summary_container.content = ft.Text("スキル未選択", italic=True)
-            return
-
-        chips = [
-            ft.Container(
-                content=ft.Text(name, size=13),
-                bgcolor=ft.Colors.BLUE_100,
-                border_radius=8,
-                padding=ft.Padding.symmetric(horizontal=8, vertical=3),
-            )
-            for name in selected
-        ]
-        rows: list[ft.Control] = [
-            ft.Row(chips[i : i + _SUMMARY_CHIPS_PER_ROW], spacing=6)
-            for i in range(0, len(chips), _SUMMARY_CHIPS_PER_ROW)
-        ]
-        selected_summary_container.content = ft.Column(rows, spacing=4)
-
-    def mark_manual_selection_change() -> None:
-        """チェックボックスの状態が変わったときの共通処理（ダイアログ内表示の更新のみ）。"""
-        update_selected_summary()
-
-    def on_skill_checkbox_change(e: ft.Event[ft.Checkbox]) -> None:
-        mark_manual_selection_change()
-        page.update()
-
-    def build_checkbox_rows(
-        names: list[str], previously_selected: set[str]
-    ) -> ft.Control:
-        controls: list[ft.Control] = []
-        for name in names:
-            checkbox = ft.Checkbox(label=name, value=name in previously_selected)
-            checkbox.on_change = on_skill_checkbox_change
-            skill_checkboxes[name] = checkbox
-            controls.append(checkbox)
-        rows: list[ft.Control] = [
-            ft.Row(controls[i : i + _SKILLS_PER_ROW], spacing=6)
-            for i in range(0, len(controls), _SKILLS_PER_ROW)
-        ]
-        return ft.Column(rows, spacing=2)
-
-    def select_all_in_group(names: list[str]) -> None:
-        for name in names:
-            skill_checkboxes[name].value = True
-        mark_manual_selection_change()
-        page.update()
-
-    def clear_all_in_group(names: list[str]) -> None:
-        for name in names:
-            skill_checkboxes[name].value = False
-        mark_manual_selection_change()
-        page.update()
-
-    def build_group_header(title: str, names: list[str]) -> ft.Control:
-        return ft.Row(
-            [
-                ft.Text(title, weight=ft.FontWeight.BOLD),
-                ft.TextButton(
-                    content="すべて選択",
-                    on_click=lambda e, ns=names: select_all_in_group(ns),
-                ),
-                ft.TextButton(
-                    content="すべてクリア",
-                    on_click=lambda e, ns=names: clear_all_in_group(ns),
-                ),
-            ]
-        )
-
-    def build_skill_checklist() -> ft.Control:
-        # 再構築のたびにチェックボックスは作り直すが、既存の選択状態は引き継ぐ
-        previously_selected = {
-            name for name, checkbox in skill_checkboxes.items() if checkbox.value
-        }
-        skill_checkboxes.clear()
-        sections: list[ft.Control] = []
-
-        for cost, names in SKILL_MASTER:
-            sections.append(build_group_header(f"コスト{cost}", names))
-            sections.append(build_checkbox_rows(names, previously_selected))
-
-        registered_names = set(_load_skill_names(db_path))
-        extra_names = sorted(registered_names - ALL_MASTER_SKILL_NAMES)
-        if extra_names:
-            sections.append(build_group_header("その他（マスター未登録）", extra_names))
-            sections.append(build_checkbox_rows(extra_names, previously_selected))
-
-        return ft.Column(sections, spacing=8)
-
-    def do_clear_selection() -> None:
-        for checkbox in skill_checkboxes.values():
-            checkbox.value = False
-        update_selected_summary()
-
-    def clear_skill_selection(e: ft.Event[ft.TextButton]) -> None:
-        do_clear_selection()
-        page.update()
-
-    def close_skill_dialog(e: ft.Event[ft.Button]) -> None:
-        page.pop_dialog()
-
-    save_set_name_field = ft.TextField(label="スキル集合の名前", width=260)
-    save_set_status_text = ft.Text(size=12)
-
-    def do_save_skill_set(name: str, selected_names: list[str]) -> None:
-        conn = get_connection(db_path)
-        try:
-            save_skill_set(conn, name, selected_names)
-        finally:
-            conn.close()
-
-        # 保存してもcurrent_set_dropdownの選択は変えない（ドロップダウンの選択肢
-        # 一覧だけは、新しく保存した名前を選べるように更新する）。
-        refresh_current_set_dropdown()
-        refresh_saved_sets_list()
-        save_set_status_text.value = f"「{name}」として保存しました"
-        save_set_name_field.value = ""
-        page.update()
-
-    def show_overwrite_confirm(name: str, selected_names: list[str]) -> None:
-        def on_confirm(e: ft.Event[ft.Button]) -> None:
-            page.pop_dialog()  # 確認ダイアログを閉じる
-            do_save_skill_set(name, selected_names)
-
-        def on_cancel(e: ft.Event[ft.TextButton]) -> None:
-            page.pop_dialog()
-
-        confirm_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("上書きの確認"),
-            content=ft.Text(f"「{name}」は既に存在します。上書きしますか？"),
-            actions=[
-                ft.TextButton(content="キャンセル", on_click=on_cancel),
-                ft.Button(content="上書きする", on_click=on_confirm),
-            ],
-        )
-        page.show_dialog(confirm_dialog)
-
-    def save_current_skill_set(e: ft.Event[ft.Button]) -> None:
-        name = (save_set_name_field.value or "").strip()
-        selected_names = [
-            n for n, checkbox in skill_checkboxes.items() if checkbox.value
-        ]
-
-        if not name:
-            save_set_status_text.value = "名前を入力してください"
-            page.update()
-            return
-        if not selected_names:
-            save_set_status_text.value = "スキルを1つ以上選択してください"
-            page.update()
-            return
-
-        conn = get_connection(db_path)
-        try:
-            existing = get_skill_set(conn, name)
-        finally:
-            conn.close()
-
-        if existing is not None:
-            show_overwrite_confirm(name, selected_names)
-        else:
-            do_save_skill_set(name, selected_names)
-
-    save_set_button = ft.Button(content="この内容を保存")
-    save_set_button.on_click = save_current_skill_set
-
-    def build_dialog_content() -> ft.Control:
-        return ft.Column(
-            [
-                ft.Text("保存済みのスキル集合", weight=ft.FontWeight.BOLD),
-                saved_sets_list_container,
-                ft.Divider(),
-                ft.Text("選択中のスキル", weight=ft.FontWeight.BOLD),
-                selected_summary_container,
-                ft.Row([save_set_name_field, save_set_button]),
-                save_set_status_text,
-                ft.Divider(),
-                build_skill_checklist(),
-            ],
-            width=760,
-            scroll=ft.ScrollMode.AUTO,
-            height=650,
-        )
-
-    def open_skill_dialog(e: ft.Event[ft.Button]) -> None:
-        # 開くたびに新しいAlertDialogインスタンスを作る
-        # （既存インスタンスのcontentを差し替える方式だと、再表示時にクライアント側の
-        #   描画とサーバー側の状態がずれてチェック状態を正しく拾えないことがあるため）
-        save_set_status_text.value = ""
-        dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("検索するスキル集合を作成"),
-            content=build_dialog_content(),
-            actions=[
-                ft.TextButton(content="選択をクリア", on_click=clear_skill_selection),
-                ft.Button(content="保存せずに閉じる", on_click=close_skill_dialog),
-            ],
-        )
-        page.show_dialog(dialog)
-
-    select_skill_button = ft.Button(content="スキル集合を作成")
-    select_skill_button.on_click = open_skill_dialog
-
     def open_current_selection_detail(e: ft.Event[ft.IconButton]) -> None:
-        # 実際に検索で使われるcurrent_set_dropdownの選択内容を表示する
-        # （ダイアログ内のチェックボックスの状態ではない）。
+        # 実際に検索で使われるcurrent_set_dropdownの選択内容を表示する。
         value = current_set_dropdown.value
         if value and value != _UNSELECTED:
             conn = get_connection(db_path)
@@ -384,164 +150,17 @@ def build_search_view(
         on_click=open_current_selection_detail,
     )
 
-    def load_named_skill_set_into_checklist(name: str) -> None:
-        """「保存済みのスキル集合」一覧の名前クリック時に呼ばれる。
+    def on_create_skill_set_click(e: ft.Event[ft.TextButton]) -> None:
+        if on_request_create_skill_set is not None:
+            on_request_create_skill_set()
 
-        チェックボックス（ダイアログ内の作業領域）には内容を反映するが、
-        current_set_dropdown（実際に検索に使われる値）は一切変更しない。
-        既存の内容を下敷きにして編集・上書き保存するための読み込みであり、
-        「これを検索に使う」という意思表示ではないため。
-        """
-        conn = get_connection(db_path)
-        try:
-            names = get_skill_set(conn, name) or []
-        finally:
-            conn.close()
+    create_skill_set_button = ft.TextButton(
+        content="＋新規作成",
+        tooltip="設定タブの「スキル集合管理」でスキル集合を作成・編集します",
+        on_click=on_create_skill_set_click,
+    )
 
-        names_set = set(names)
-        for skill_name, checkbox in skill_checkboxes.items():
-            checkbox.value = skill_name in names_set
-        mark_manual_selection_change()
-        save_set_status_text.value = f"「{name}」の内容をチェックボックスに読み込みました"
-        page.update()
-
-    def open_skill_set_detail(name: str) -> None:
-        conn = get_connection(db_path)
-        try:
-            names = get_skill_set(conn, name) or []
-        finally:
-            conn.close()
-
-        def close_detail(e: ft.Event[ft.TextButton]) -> None:
-            page.pop_dialog()
-
-        detail_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text(f"「{name}」の内容"),
-            content=ft.Text(
-                "、".join(names) if names else "（スキルが登録されていません）"
-            ),
-            actions=[
-                ft.TextButton(content="閉じる", on_click=close_detail),
-            ],
-        )
-        page.show_dialog(detail_dialog)
-
-    def confirm_delete_skill_set(name: str) -> None:
-        def do_delete(e: ft.Event[ft.Button]) -> None:
-            conn = get_connection(db_path)
-            try:
-                delete_skill_set(conn, name)
-            finally:
-                conn.close()
-            # current_set_dropdownが削除した名前を選択中だった場合のみ、
-            # 未選択に戻る（refresh_current_set_dropdown内の「無効なら
-            # リセット」ロジックによる。それ以外は変更しない）。
-            refresh_current_set_dropdown()
-            page.pop_dialog()
-            refresh_saved_sets_list()
-            save_set_status_text.value = f"「{name}」を削除しました"
-            page.update()
-
-        def cancel_delete(e: ft.Event[ft.TextButton]) -> None:
-            page.pop_dialog()
-
-        conn = get_connection(db_path)
-        try:
-            armors_using_it = list_armors_using_skill_set(conn, name)
-        finally:
-            conn.close()
-
-        message = f"「{name}」を削除しますか？この操作は取り消せません。"
-        if armors_using_it:
-            armor_list = "、".join(armors_using_it)
-            message += (
-                f"\n\n⚠ このスキル集合は防具「{armor_list}」の検索初期設定（設定タブ）で"
-                "使われています。削除すると、その防具の初期設定はスキル未選択として扱われます。"
-            )
-
-        confirm_dialog = ft.AlertDialog(
-            modal=True,
-            title=ft.Text("削除の確認"),
-            content=ft.Text(message),
-            actions=[
-                ft.TextButton(content="キャンセル", on_click=cancel_delete),
-                ft.Button(content="削除する", on_click=do_delete),
-            ],
-        )
-        page.show_dialog(confirm_dialog)
-
-    def build_saved_sets_list() -> ft.Control:
-        conn = get_connection(db_path)
-        try:
-            names = list_skill_set_names(conn)
-        finally:
-            conn.close()
-
-        if not names:
-            return ft.Text("保存済みのスキル集合はまだありません", italic=True)
-
-        entries: list[ft.Control] = []
-        for name in names:
-            entries.append(
-                ft.Row(
-                    [
-                        # 名前をクリックすると、その内容をチェックボックスに読み込む
-                        # （編集・上書き保存の下書き用）。current_set_dropdownは
-                        # 直接は変更しないが、チェックボックスの状態が変わるため
-                        # 結果的に「（未保存の選択）」表示になる（手動でのチェック
-                        # 操作と同じ扱い。検索に使うスキル集合の切り替えは
-                        # ドロップダウンでの選択のみ）。
-                        ft.TextButton(
-                            content=ft.Text(
-                                name,
-                                width=_SAVED_SET_NAME_WIDTH,
-                                max_lines=1,
-                                overflow=ft.TextOverflow.ELLIPSIS,
-                            ),
-                            tooltip=name,  # 省略されても元の名前が分かるように
-                            on_click=lambda e, n=name: load_named_skill_set_into_checklist(n),
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.INFO_OUTLINE,
-                            tooltip="詳細を見る",
-                            on_click=lambda e, n=name: open_skill_set_detail(n),
-                        ),
-                        ft.IconButton(
-                            icon=ft.Icons.DELETE,
-                            tooltip="削除",
-                            icon_color=ft.Colors.RED_400,
-                            on_click=lambda e, n=name: confirm_delete_skill_set(n),
-                        ),
-                    ],
-                    spacing=0,
-                )
-            )
-        # wrap=Trueは折り返し判定に親からの幅の伝播が必要で不安定だったため、
-        # スキルチェックボックスの並びなどと同じ「固定数ごとに手動で行分割」方式にする。
-        rows: list[ft.Control] = [
-            ft.Row(entries[i : i + _SAVED_SETS_PER_ROW], spacing=8)
-            for i in range(0, len(entries), _SAVED_SETS_PER_ROW)
-        ]
-        return ft.Column(rows, spacing=4)
-
-    saved_sets_list_container = ft.Container()
-
-    def refresh_saved_sets_list() -> None:
-        saved_sets_list_container.content = build_saved_sets_list()
-
-    refresh_saved_sets_list()
-
-    # skill_checkboxesは、従来は「スキル集合を作成」ダイアログを開いたときに
-    # build_skill_checklist()経由で初めて作られていた。しかしskill_checkboxesは
-    # 検索実行時の選択スキル一覧や「現在の選択内容を見る」ダイアログでも参照するため、
-    # ダイアログを一度も開いていない状態（例: スキル集合ドロップダウンで直接選んだ
-    # だけの場合）だと選択が空として扱われてしまう不具合があった。ここで一度呼んで
-    # 初期化しておく（戻り値のColumnはダイアログ内でのみ使うためここでは捨てる）。
-    build_skill_checklist()
-
-    update_selected_summary()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
-    refresh_current_set_dropdown()  # 同上
+    refresh_current_set_dropdown()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
 
     batch_dropdown = ft.Dropdown(
         label="対象バッチ",
@@ -608,11 +227,15 @@ def build_search_view(
             date_to_dropdown.value = _UNSELECTED
 
     def refresh_filter_options() -> None:
-        """取込タブでの取込完了時に外部から呼ばれ、バッチ/防具の選択肢を最新化する。
+        """取込タブでの取込完了時や検索タブへの切り替え時に外部から呼ばれ、
+        バッチ/防具/スキル集合の選択肢を最新化する。
 
+        スキル集合の作成・編集・削除は設定タブの「スキル集合管理」で行える
+        ため、そちらでの変更をこのタブに戻ってきたときに確実に反映する。
         ページ接続後にのみ呼ばれる想定（page.update()を呼ぶため）。
         """
         _load_filter_data()
+        refresh_current_set_dropdown()
         page.update()
 
     _load_filter_data()  # 初期表示（ページ未接続のためpage.update()は呼ばない）
@@ -722,10 +345,10 @@ def build_search_view(
                 [
                     current_set_dropdown,
                     current_set_detail_button,
+                    create_skill_set_button,
                     ft.Text("に含まれるスキルが"),
                     threshold_dropdown,
                     ft.Text("個以上含まれる結果を検索"),
-                    select_skill_button,
                 ]
             ),
             condition_heading("スキル欠け"),
@@ -906,9 +529,9 @@ def build_search_view(
 
         mode = batch_date_mode_group.value
 
-        # 検索に使うスキル集合は、ダイアログ内のチェックボックスではなく
-        # current_set_dropdownの選択内容をDBから読み直したものを使う
-        # （スキル未選択でもよい。その場合は他の条件のみで検索する）。
+        # 検索に使うスキル集合は、current_set_dropdownの選択内容をDBから
+        # 読み直したものを使う（スキル未選択でもよい。その場合は他の条件
+        # のみで検索する）。
         selected_names: list[str] = []
         if current_set_dropdown.value and current_set_dropdown.value != _UNSELECTED:
             conn = get_connection(db_path)
@@ -1047,8 +670,6 @@ def build_search_view(
         スキル集合をその内容で復元する。指定されない場合（履歴タブからの
         遷移時）は、従来通りすべて既定値にリセットする。
         """
-        do_clear_selection()
-
         if defaults is not None:
             cost_min_dropdown.value = str(defaults.min_total_cost)
             cost_max_dropdown.value = str(defaults.max_total_cost)
@@ -1094,6 +715,7 @@ def build_search_view(
         condition_toggle_button.content = "検索条件を変更"
 
         _load_filter_data()  # 対象バッチが選択肢に確実に含まれるようにする
+        refresh_current_set_dropdown()  # スキル集合名が確実に選択肢に含まれるようにする
         batch_date_mode_group.value = _BATCH_MODE
         batch_dropdown.value = str(batch_id)
         apply_batch_date_mode()

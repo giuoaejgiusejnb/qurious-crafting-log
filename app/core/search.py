@@ -70,9 +70,10 @@ _SELECT_COLUMNS = (
 def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[SearchResultRow]:
     """resultsを検索する（最大 params.limit 件）。並び順はparams.sort（SORT_OPTIONS参照、既定は新しい順）。
 
-    許可スキル集合を指定した場合: そのうちresultが持つ値の合計（＋2は同じスキル2個分として
-    加算）がparams.threshold以上のもののみを対象とする。許可集合に含まれないスキルを
-    併せ持っていても除外しない（除外はしきい値のみで判定する）。
+    許可スキル集合を指定した場合: そのうちresultが持つ正の値の合計（＋2は同じスキル2個分として
+    加算）がparams.threshold以上のもののみを対象とする。マイナス値（スキル欠け）は合計に
+    含めない（プラスのスキルと相殺されない）。許可集合に含まれないスキルを併せ持っていても
+    除外しない（除外はしきい値のみで判定する）。
     result_skills.skill_id にインデックスを張っているため、許可スキル数が少数
     （〜10種類程度）であれば、全件走査ではなくインデックス経由の絞り込みになり高速。
 
@@ -91,7 +92,7 @@ def search_results(conn: sqlite3.Connection, params: SearchParams) -> list[Searc
                 FROM result_skills
                 WHERE skill_id IN ({placeholders})
                 GROUP BY result_id
-                HAVING SUM(value) >= ?
+                HAVING SUM(CASE WHEN value > 0 THEN value ELSE 0 END) >= ?
             ) matched
             JOIN results r ON r.id = matched.result_id
             WHERE 1 = 1

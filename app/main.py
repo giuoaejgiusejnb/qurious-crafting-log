@@ -84,12 +84,24 @@ def main(page: ft.Page) -> None:
     collection_panel, open_collection_panel, close_collection_panel = build_collection_panel(
         page, DB_PATH
     )
-    search_view, refresh_search_filters, select_search_batch = build_search_view(
-        page, DB_PATH, on_collected=open_collection_panel
-    )
 
     SEARCH_TAB_INDEX = 1
     SETTINGS_TAB_INDEX = 3
+
+    def go_to_skill_set_manager() -> None:
+        """検索タブの「＋新規作成」から呼ばれ、設定タブの「スキル集合管理」に
+        切り替える（switch_settings_to_skill_set_managerは設定タブ構築後に
+        代入されるが、この関数自体はボタン押下時にしか呼ばれないため問題ない）。
+        """
+        tabs_control.selected_index = SETTINGS_TAB_INDEX
+        switch_settings_to_skill_set_manager()
+
+    search_view, refresh_search_filters, select_search_batch = build_search_view(
+        page,
+        DB_PATH,
+        on_collected=open_collection_panel,
+        on_request_create_skill_set=go_to_skill_set_manager,
+    )
 
     def go_to_search_with_batch(batch_id: int) -> None:
         """履歴タブから呼ばれ、検索タブへ切り替えて指定バッチを対象に検索する。
@@ -137,16 +149,23 @@ def main(page: ft.Page) -> None:
         page, DB_PATH, on_imported=on_imported, on_show_results=go_to_search_after_import
     )
 
-    settings_view, refresh_settings_view = build_settings_view(page, DB_PATH)
+    settings_view, refresh_settings_view, switch_settings_to_skill_set_manager = (
+        build_settings_view(page, DB_PATH)
+    )
     contact_view = build_contact_view(page, DB_PATH)
 
     def on_tabs_change(e: ft.Event[ft.Tabs]) -> None:
-        # 設定タブに切り替わるたびに表示中の項目を読み直し、検索タブでの
-        # スキル集合の作成・削除や取込タブでの防具追加など、他タブでの
-        # 変更を反映する（例: 新しく作ったスキル集合が防具ごとの検索初期
-        # 設定のドロップダウンに出てこない、という不具合の対策）。
+        # 設定タブに切り替わるたびに表示中の項目を読み直し、「スキル集合管理」
+        # での変更や取込タブでの防具追加など、他タブでの変更を反映する
+        # （例: 新しく作ったスキル集合が防具ごとの検索初期設定のドロップダウンに
+        # 出てこない、という不具合の対策）。
+        # 検索タブに切り替わるたびにも同様に、バッチ/防具/スキル集合の
+        # 選択肢一覧を最新化する（スキル集合の作成・削除は設定タブの
+        # 「スキル集合管理」で行うため、そちらでの変更を確実に反映する）。
         if tabs_control.selected_index == SETTINGS_TAB_INDEX:
             refresh_settings_view()
+        elif tabs_control.selected_index == SEARCH_TAB_INDEX:
+            refresh_search_filters()
 
     tabs_control = ft.Tabs(
         length=5,

@@ -55,6 +55,18 @@ def test_search_excludes_result_below_threshold(conn):
     assert rows == []
 
 
+def test_search_ignores_negative_values_when_checking_threshold(conn):
+    # マイナス値（スキル欠け）は合計に含めない。「ひるみ軽減+1」「火事場力-1」なら
+    # 単純合計は0だが、マイナスを除いた「ひるみ軽減+1」だけでしきい値1を満たす。
+    import_block(conn, build_row(zeny_count=1, skills=[("ひるみ軽減", 1), ("火事場力", -1)]))
+
+    allowed = _allowed_ids(conn, names=("ひるみ軽減", "火事場力"))
+    params = SearchParams(allowed_skill_ids=allowed, threshold=1)
+    rows = search_results(conn, params)
+
+    assert [r.zeny_count for r in rows] == [1]
+
+
 def test_search_does_not_exclude_result_with_skill_outside_allowed_set(conn):
     # 現仕様: 許可集合外のスキル（爆破）を含んでいても、許可集合内の合計がしきい値を
     # 満たしていれば除外しない（旧仕様の「集合外を含むと除外」ルールは廃止）
