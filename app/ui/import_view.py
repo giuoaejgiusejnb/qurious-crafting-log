@@ -213,7 +213,7 @@ def build_import_view(
         width=320,
         tooltip=(
             "「スキル名:元のLv」をカンマ区切りで。これ以外のスキルが下がっていたら読み取りの矛盾として記録します。"
-            "結果画面２（スキルが4つ以上）で、写っていないスキルがマイナスかどうかの判定にも使います"
+            "スキルが4つ以上あり4つ目以降が画像に写っていないときに、写っていないスキルがマイナスかどうかの判定にも使います"
         ),
     )
     image_dir_text = ft.Text("フォルダ未選択", italic=True)
@@ -442,7 +442,7 @@ def build_import_view(
         finish_import(result.summary, label, extra)
         status_text.value += (
             f"\n画像 {result.image_count}枚 / 結果画面 {sum(run.screen_counts.values())}枚"
-            f"（うち結果画面２ {run.screen_counts.get('screen2', 0)}枚）"
+            f"（うちスキルが4つ以上で4つ目以降が写っていないもの {run.screen_counts.get('screen2', 0)}枚）"
             f" / 結果画面以外 {run.not_result_count}枚 / 読込失敗 {run.read_error_count}枚"
             f" / 読み取り {run.timings['total']:.0f}秒"
         )
