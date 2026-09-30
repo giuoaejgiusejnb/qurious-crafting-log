@@ -42,5 +42,4 @@ exclude = [
     "PROGRESS.md",
     "CLAUDE.md",
     "docs",
-    "app/ocr/templates/review",
 ]
