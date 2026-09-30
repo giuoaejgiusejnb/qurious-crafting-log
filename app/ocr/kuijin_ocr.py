@@ -39,7 +39,6 @@ import argparse
 import csv
 import json
 import os
-import shutil
 import sys
 import time
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
@@ -837,15 +836,17 @@ ProgressCallback = Callable[[int, int], None]
 EXTRACT_CHUNK = 64
 
 
-def user_template_dir(data_dir: Path) -> Path:
-    """アプリが使う見本の置き場所（data_dir/ocr_templates）。無ければ同梱の見本を複製して作る。
+def user_template_dir(data_dir: Path, bundled: Path = BUNDLED_TEMPLATE_DIR) -> Path:
+    """アプリが使う見本の置き場所（data_dir/ocr_templates）。
 
     インストール先（Program Files）には書き込めず、新しい見本や skill_props.json の追記が
-    保存できないため、DB と同じユーザーのデータフォルダに複製して使う。
+    保存できないため、DB と同じユーザーのデータフォルダに複製して使う。無ければ同梱の見本を複製し、
+    あれば同梱の見本の更新（アプリの更新で増えた見本）を、ユーザーが付けた見本を残したまま取り込む。
     """
+    from app.ocr.template_sync import sync_templates   # template_sync はこのモジュールを使うので、ここで読み込む
+
     dst = data_dir / "ocr_templates"
-    if not dst.exists():
-        shutil.copytree(BUNDLED_TEMPLATE_DIR, dst, ignore=shutil.ignore_patterns("review"))
+    sync_templates(dst, bundled)
     return dst
 
 
