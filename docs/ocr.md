@@ -17,7 +17,6 @@ result_log と同じ形式にする。取込タブの「練成画像から取込
 | `scripts/ocr/pick_images.py` | 指定スキルのレベルが上がった画像を抜き出す |
 | `scripts/ocr/spot_check.py` | ランダム抜き取り確認用の一覧画像を作る |
 | `scripts/ocr/check_spec.py` | 結果が傀異錬成の抽選仕様（hyperWiki の表）で作れるかを調べる |
-| `scripts/ocr/check_skills_easyocr.py` / `check_values_easyocr.py` | EasyOCR による独立した検算（スキル名 / 防御・耐性・レベル・ゼニー） |
 
 スキル名とコストの一覧は `app/core/skill_master.py` を共有している。
 
@@ -32,12 +31,8 @@ result_log と同じ形式にする。取込タブの「練成画像から取込
 ## 環境
 
 - 実行時の依存は numpy / opencv-python-headless（`pyproject.toml` の dependencies）
-- EasyOCR（torch を含む）は開発用の optional-dependencies `ocr-dev`。**配布物には入れない**
-  - 新しいスキル名の見本へのラベル付けと、`scripts/ocr` の検算・確認に使う
-  - EasyOCR が無い環境（配布版）では、新しいスキル名の見本もアプリのラベル入力（下記）で名前を付ける
-- GPU で検算するときは CUDA 版 PyTorch を入れた別の venv を使う（配布物・`.venv` には入れない）。
-  mhrise-skill-ocr の頃の `C:\Users\takuy\OneDrive\Desktop\dev\mhrise-skill-ocr\.venv-verify` がそれ
-  （例: `../mhrise-skill-ocr/.venv-verify/Scripts/python scripts/ocr/check_skills_easyocr.py ...`）
+- 開発用の optional-dependencies `ocr-dev` は Pillow だけ（`spot_check.py` と `--slot-sheet` で使う）
+- EasyOCR は使わない（下記「EasyOCR による検算の終了」）
 - Windows。Python は `PYTHONIOENCODING=utf-8` を付けて実行すると日本語の出力が化けない
 - 画像の切り出しは、ソースから起動したときは別プロセスで並列に、exe 版ではスレッドで行う
   （exe 版で子プロセスを起こすとアプリ本体が起動するおそれがあるため。7,500 枚で約 12 秒 → 約 26 秒）
@@ -60,6 +55,8 @@ samples/spot/{バッチ名}/                     … 抜き取り確認の一覧
 
 例: `d=samples/base_slot6/0926_2`（初期スロット 6、4000 ゼニー、マッスル）
 
+新しい防具の最初のバッチも、この手順で確認する（「EasyOCR による検算の終了」を参照）。
+
 1. 読み取り
    ```
    .venv/Scripts/python -m app.ocr.kuijin_ocr --base-slot 6 --zenny-step 4000 --minus-skills 攻撃:2,火事場力:3 $d -o ${d}_result.txt --detail ${d}_result.csv
@@ -71,28 +68,33 @@ samples/spot/{バッチ名}/                     … 抜き取り確認の一覧
    .venv/Scripts/python scripts/ocr/pick_images.py ${d}_result.csv $d -s 龍気変換 奮闘 激昂 業鎧修羅 狂竜症蝕 -o ${d}_picked
    ```
    新しいスキル名の見本に対象スキルが含まれていれば、画像で確認してから渡す
-3. EasyOCR の検算（GPU、1 万枚あたり約 40 分。バックグラウンドで回す）
-   ```
-   <GPU の venv>/Scripts/python scripts/ocr/check_skills_easyocr.py ocr $d -o ${d}_easyocr.csv
-   <GPU の venv>/Scripts/python scripts/ocr/check_values_easyocr.py ocr $d -o ${d}_values_easyocr.csv
-   ```
-4. 新しい見本に名前を付ける（下記）→ 1 を再実行して check 0 件にする → 2 も再実行
-5. 仕様チェックと比較
+3. 新しい見本に名前を付ける（下記）→ 1 を再実行して check 0 件にする → 2 も再実行
+4. 仕様チェック（`--table` は防具のテーブル）
    ```
    .venv/Scripts/python scripts/ocr/check_spec.py --table 5 ${d}_result.csv -o ${d}_spec_errors.csv
-   .venv/Scripts/python scripts/ocr/check_skills_easyocr.py compare ${d}_easyocr.csv ${d}_result.csv -o ${d}_skill_mismatch.csv
-   .venv/Scripts/python scripts/ocr/check_values_easyocr.py compare ${d}_values_easyocr.csv ${d}_result.csv -o ${d}_value_mismatch.csv
    ```
-   - スキル名の食い違いは、いつもの「雷→龍」以外は画像で確認する
-   - 値の食い違いは「要確認」に分類されたものだけ画像で確認する
-6. 抜き取り確認（60 枚、結果画面２とレア演出を含む）。一覧画像を全部見る
+5. 抜き取り確認（60 枚、結果画面２とレア演出を含む）。一覧画像を全部見る
    ```
    .venv/Scripts/python scripts/ocr/spot_check.py ${d}_result.csv $d -n 60 -o samples/spot/{バッチ名}
    ```
 
-**EasyOCR の全件検算（手順 3 と 5 の compare）は 0926_4 で終了した**（2026-09-26、ユーザー了承）。
-9 バッチで kuijin の誤りは 0 件（食い違いはすべて EasyOCR 側）。今後は手順 1・2・4・5 の check_spec・6 を行う。
-防具・Switch の設定・ゲームのバージョンが変わったら、最初のバッチは全件検算に戻す。
+## EasyOCR による検算の終了
+
+EasyOCR（別の方法での読み取り）による全件検算は 0926_4 で終了し（2026-09-26）、検算スクリプトと
+EasyOCR による見本の自動ラベル付けは削除した（2026-09-30、ユーザー了承）。
+9 バッチで kuijin の誤りは 0 件（食い違いはすべて EasyOCR 側）だった。
+
+- 検算が見ていたのは、スキル名・防御力・耐性・レベル・ゼニーの読み取り。これらは画面の描き方
+  （フォント・位置・演出）に依存し、防具には依存しない。スキル名の見本は全 123 スキルそろっている
+- 防具を変えて変わるのは「初期スロット」と「初期スキルとその値」だけ。スロットは検算の対象外だった
+- 画面の描き方が変わる状況（ゲームのアップデート、Switch の表示設定・解像度、撮影方法の変更）は
+  起こらない前提とした（ユーザー判断）。別の解像度の画像は取込時にエラーにする
+
+新しい防具の最初のバッチでは、代わりに次を行う:
+1. 取込タブで「防具が元から持つスキル」を正しく入力する（それ以外のスキルが下がっていたら自己チェックの矛盾になる）
+2. 新しい初期スロットではスロットの見本がすべて新しくなるので、ラベル入力のダイアログで慎重に付ける
+3. 抽選の仕様チェック（`check_spec.py`、アプリでは取込時の「仕様違反」）を通す
+4. 抜き取り確認（`spot_check.py`、60 枚）
 
 ## 見本（テンプレート）の名前付け
 
@@ -102,9 +104,9 @@ samples/spot/{バッチ名}/                     … 抜き取り確認の一覧
 | 種類 | ラベル |
 |---|---|
 | `glyph`（防御・耐性の 1 文字） | `"0"`〜`"9"`、`"+"`。演出の粒などのノイズは `""` |
-| `money_glyph`（ゼニーの 1 文字） | `"0"`〜`"9"` |
+| `money_glyph`（ゼニーの 1 文字） | `"0"`〜`"9"`。ノイズは `""` |
 | `slot_base{N}` | 追加スロット数 `"+0"`〜`"+6"`。`--slot-sheet 画像.png` を付けて実行すると色付きの確認画像が出る |
-| `name`（スキル名） | EasyOCR で自動付与。`?` 付きは迷ったもの。**付いていなくても画像で確認する**（過去に KO術→体術 などの誤りあり） |
+| `name`（スキル名） | スキル名（`app/core/skill_master.py` の表記）。「雷」と「龍」のように似た文字に注意して画像で確認する |
 | `value`（防御・耐性の値） | glyph から自動で組み立てるので編集不要 |
 
 新しい見本はほとんどがレア演出（赤く光る画面）か、結果画面２・2〜3 行目のスキル名のわずかな描画差によるもの。

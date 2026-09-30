@@ -71,7 +71,7 @@ def test_template_bank_is_unlabeled(tmp_path):
     from app.ocr.kuijin_ocr import TemplateBank
 
     names = TemplateBank(tmp_path, "1280x720", "name")
-    names.labels = [None, "攻撃", "回復速度?"]   # "?" 付きは EasyOCR の候補が僅差だったもの
+    names.labels = [None, "攻撃", "回復速度?"]   # "?" 付きは以前の自動ラベル付けで候補が僅差だったもの
     assert [names.is_unlabeled(i) for i in range(3)] == [True, False, True]
 
     slots = TemplateBank(tmp_path, "1280x720", "slot", "_base3")

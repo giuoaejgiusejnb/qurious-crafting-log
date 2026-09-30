@@ -13,10 +13,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
 ]
-# 開発用。新しいスキル名の見本へのラベル付け（kuijin_ocr）と scripts/ocr の検算・確認用スクリプト。
-# torch を含み配布サイズが非常に大きくなるため、配布版（flet build）には入れない
+# 開発用。scripts/ocr の確認用スクリプト（spot_check.py）と kuijin_ocr の --slot-sheet で使う
 ocr-dev = [
-    "easyocr",
     "pillow",
 ]
 

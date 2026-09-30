@@ -11,4 +11,4 @@
 
 - `app/ocr/` と `scripts/ocr/` の仕様・検証手順・決めたことは `docs/ocr.md` にまとめている。触る前に読む
 - `app/ocr/templates/` は読み取りの正しさそのもの。消さない
-- EasyOCR（torch）は配布物・`dependencies` に入れない（開発用の `ocr-dev` のみ）
+- EasyOCR は使わない（検算は終了し、関連コードは削除した。経緯は `docs/ocr.md`）

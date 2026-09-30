@@ -10,10 +10,9 @@
     1. 画面の種類を判定し、各項目を切り出して二値化（マルチプロセス）
     2. 既知テンプレートと照合し、一致しないものだけ新しいテンプレートにする
     3. 新しいテンプレートにラベルを付ける
-         スキル名: EasyOCR で読み、skill_master の最も近い名前に補正
-         数値    : 符号は形で判定し、数字は 1 文字ずつ数字テンプレートと照合
-                   （EasyOCR は "-" や 1 桁の数字を読み落とすため）
-         スロット・符号と数字: 種類が少ないので templates/*.json を手で編集して名前を付ける
+         アプリ: 取込タブのダイアログで、画像を見てユーザーが選ぶ（start_reading → apply_labels → finish_reading）
+         CLI   : templates/review/ の拡大画像を見て templates/*.json を手で編集する
+         数値は符号を形で判定し、数字は 1 文字ずつ数字テンプレートと照合して組み立てる
                    （スロットは追加数 "+0"〜"+6"。追加部分の見た目は初期スロットごとに違うので、
                     テンプレートは実行時に --base-slot で指定した初期スロットごとに分けて持つ）
     4. テンプレートを templates/ に保存し、次回以降は照合だけで済ませる
@@ -38,13 +37,11 @@ from __future__ import annotations
 
 import argparse
 import csv
-import difflib
 import json
 import os
 import shutil
 import sys
 import time
-import unicodedata
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
@@ -54,7 +51,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from app.core.skill_master import ALL_MASTER_SKILL_NAMES, SKILL_MASTER, UNKNOWN_SKILL_NAME
+from app.core.skill_master import SKILL_MASTER, UNKNOWN_SKILL_NAME
 
 BASE_SIZE = (1280, 720)   # (幅, 高さ) この大きさにそろえてから処理する
 # 同梱の見本（確認済みのテンプレート）。CLI は既定でここを読み書きする。
@@ -65,13 +62,12 @@ BUNDLED_TEMPLATE_DIR = Path(__file__).with_name("templates")
 # （全体だけだと「火属性攻撃強化」と「氷属性攻撃強化」のような 1 文字違いが一致してしまう）
 MATCH_THRESHOLD = {"default": (0.15, 0.2),
                    # 二値化した「雷」と「龍」は、別の行の「龍」同士より近いことがあるため、
-                   # スキル名はほぼ完全一致のときだけまとめ、見分けは OCR に任せる
+                   # スキル名はほぼ完全一致のときだけまとめる（違う見本になればラベル入力で見分ける）
                    "name": (0.03, 0.15),
                    "glyph": (0.15, 1.0),   # 1 文字ずつなので全体の IoU だけ
                    "money_glyph": (0.15, 1.0)}
 BLOCK_W = 16
 SIGNATURE_THRESHOLD = 0.3
-AMBIGUOUS_MARGIN = 0.1    # スキル名の補正で、1 位と 2 位の類似度の差がこれ未満なら要確認
 MIN_INK = 40              # スキル名行の画素数がこれ未満ならスキル無し
 MIN_CONTRAST = 30         # 割合で決めるしきい値の下限（何も書かれていない欄でノイズを拾わないため）
 DIGIT_SHAPE = (20, 14)    # 数値の 1 文字（符号・数字）の切り出しサイズ
@@ -431,7 +427,7 @@ class TemplateBank:
 
     def is_unlabeled(self, i: int) -> bool:
         """ラベルが確定していないか。未設定のほか、スロットの "?slot#n"（未設定の印）と、
-        スキル名の "…?"（EasyOCR の読みで候補が僅差だったもの）も確定していないとみなす。"""
+        "?" を含むスキル名（以前の EasyOCR による自動ラベル付けで候補が僅差だったもの）も確定していないとみなす。"""
         label = self.labels[i]
         if label is None:
             return True
@@ -447,7 +443,7 @@ class TemplateBank:
             best = int(dist.argmin())
             if dist[best] < whole:
                 # 保存済みのテンプレートは元画像が分からないので、最初に当たった画像を覚えておく
-                # （ラベルが確定していない見本の確認画像と、EasyOCR でのラベル付けに使う）
+                # （ラベルが確定していない見本の確認画像に使う）
                 if self.sources[best] is None:
                     self.sources[best] = source
                 return best
@@ -472,24 +468,10 @@ class TemplateBank:
 
 # ---------------------------------------------------------------- ラベル付け
 
-def snap_to_master(text: str) -> tuple[str, float]:
-    """OCR 結果を skill_master の最も近いスキル名に補正する。
-
-    候補が僅差で並ぶとき（例: OCR "優速度" は 回復速度 と 装填速度 が同点）は
-    名前の末尾に "?" を付けて要確認にする。templates/*_name.json を直せば次回から反映される。
-    """
-    # 画面は "ＫＯ術" "ＵＰ" のように全角英数字、skill_master は半角なのでそろえる
-    text = unicodedata.normalize("NFKC", text).replace(" ", "")
-    scored = sorted(((difflib.SequenceMatcher(None, text, unicodedata.normalize("NFKC", s)).ratio(), s)
-                     for s in ALL_MASTER_SKILL_NAMES), reverse=True)
-    (score, best), (second, _) = scored[0], scored[1]
-    return (best + "?" if score - second < AMBIGUOUS_MARGIN else best), score
-
-
 def read_number(bits: np.ndarray, glyphs: TemplateBank, source: tuple[str, str] | None = None) -> str:
     """二値化済みの '+24' '-3' '-'（変化なし）などを 1 文字ずつ文字テンプレートと照合して読む。
 
-    EasyOCR は "-" や 1 桁の数字を読み落とすので使わない。"-" は数画素しかなく
+    "-" は数画素しかなく
     テンプレート照合では揺れるので、横長の形かどうかで判定する。それ以外の文字は
     テンプレートにし、ラベル（"+" "0"〜"9"）は手で付ける。
     ラベルが空文字 "" の文字はノイズ（演出の粒など）として無視する。読めない文字は '?'。
@@ -548,45 +530,6 @@ def read_money(glyphs: TemplateBank, ids: list[int]) -> str:
         return "?"
     digits = "".join(lab or "" for lab in labels)
     return digits[:-3] if len(digits) > 3 and digits.isdigit() else "?"
-
-
-def easyocr_available() -> bool:
-    try:
-        import easyocr  # noqa: F401  # pyright: ignore[reportMissingImports]
-    except ImportError:
-        return False
-    return True
-
-
-def label_names(bank: TemplateBank, screen_of: dict[str, str]) -> list[tuple[int, str, str, float]]:
-    """ラベル未設定のスキル名テンプレートを EasyOCR で読む。(番号, OCR文字列, ラベル, 類似度) を返す。
-
-    EasyOCR が入っていない環境（配布版）では何もしない。ラベルは未設定のまま残り、
-    そのテンプレートに当たったスキル名は "?"（要確認）になる。
-    元画像が分からないもの（前回の実行で作られ、今回は当たらなかったもの）も飛ばす。
-    """
-    todo = [i for i, lab in enumerate(bank.labels) if lab is None and bank.sources[i] is not None]
-    if not todo or not easyocr_available():
-        return []
-    import easyocr  # 読み込みが重いので必要なときだけ  # pyright: ignore[reportMissingImports]
-
-    reader = easyocr.Reader(["ja"], gpu=False, verbose=False)
-    report = []
-    for i in todo:
-        source = bank.sources[i]
-        loaded = load_image(source[0]) if source is not None else None
-        if source is None or loaded is None:
-            continue
-        path, field = source
-        img = loaded[0]
-        dy = LAYOUTS[screen_of[path]]["dy"] + SKILL_DY[int(field[-1]) - 1]
-        crop = img[NAME.y0 + dy - 4:NAME.y1 + dy + 4, NAME.x0 - 4:NAME.x1]
-        crop = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
-        text = "".join(reader.readtext(crop, detail=0))
-        name, score = snap_to_master(text)
-        bank.labels[i] = name
-        report.append((i, text, name, score))
-    return report
 
 
 # ---------------------------------------------------------------- 確認用
@@ -898,7 +841,6 @@ class OcrRun:
     results: list                  # 画像ごとの (テンプレート, 番号)。write_slot_sheet 用
     screen_of: dict[str, str]
     banks: list[TemplateBank]
-    name_report: dict[str, list[tuple[int, str, str, float]]]
     template_dir: Path
     timings: dict[str, float] = field(default_factory=dict)
 
@@ -955,7 +897,7 @@ class PendingLabel:
     index: int
     image_png: bytes   # 確認用の画像（元画像が分かればカラーの切り出し、無ければ二値化した見本の拡大）
     glyph_png: bytes   # 文字の見本だけ: 二値化した 1 文字の拡大（image_png はその文字を含む欄）
-    guess: str         # 候補（EasyOCR の読みなど。無ければ ""）
+    guess: str         # 候補（"?" 付きの古いラベルから "?" を除いたもの。無ければ ""）
     count: int         # この回の画像で当たった枚数（文字の見本は数えていないので 0）
 
     @property
@@ -1005,7 +947,6 @@ class OcrSession:
     banks: dict[tuple[str, str], TemplateBank] = field(default_factory=dict)
     results: list[dict | None] = field(default_factory=list)
     screen_of: dict[str, str] = field(default_factory=dict)
-    name_report: dict[str, list[tuple[int, str, str, float]]] = field(default_factory=dict)
     timings: dict[str, float] = field(default_factory=dict)
 
     def bank(self, device: str, kind: str) -> TemplateBank:
@@ -1145,11 +1086,8 @@ def start_reading(
         session.results.append(ids)
     t_match = time.perf_counter() - start - t_extract
 
-    session.name_report = {b.name: label_names(b, session.screen_of)
-                           for b in list(session.banks.values()) if b.kind == "name"}
-    t_ocr = time.perf_counter() - start - t_extract - t_match
     session.build_values()   # 新しい形の文字をここで見つけておく（pending_labels に出すため）
-    session.timings = {"extract": t_extract, "match": t_match, "ocr": t_ocr, "start": start}
+    session.timings = {"extract": t_extract, "match": t_match, "start": start}
     return session
 
 
@@ -1164,7 +1102,7 @@ def finish_reading(session: OcrSession) -> OcrRun:
         b.save()
 
     # 1 枚ごとの値。ex が None なら読み込み失敗、values が None なら結果画面以外。
-    # ラベルが付いていない見本（EasyOCR の無い環境で出た新しいスキル名など）は "?"（要確認）
+    # ラベルが付いていない見本は "?"（要確認）
     records: list[tuple[str, dict | None, dict | None]] = []
     for path, ex, ids in zip(session.paths, session.extracted, session.results):
         values = None
@@ -1185,10 +1123,9 @@ def finish_reading(session: OcrSession) -> OcrRun:
 
     report = build_report(records, session.zenny_step // 1000, session.template_dir, session.minus_skills)
     t = session.timings
-    timings = {"extract": t["extract"], "match": t["match"], "ocr": t["ocr"],
-               "total": time.perf_counter() - t["start"]}
+    timings = {"extract": t["extract"], "match": t["match"], "total": time.perf_counter() - t["start"]}
     return OcrRun(report, records, session.paths, session.results, session.screen_of,
-                  list(session.banks.values()), session.name_report, session.template_dir, timings)
+                  list(session.banks.values()), session.template_dir, timings)
 
 
 def read_images(
@@ -1265,22 +1202,15 @@ def main() -> None:
     if args.slot_sheet:
         write_slot_sheet(args.slot_sheet, run.paths, run.results, run.screen_of)
 
-    for bank_name, report in run.name_report.items():
-        for i, text, label, score in report:
-            mark = "??" if score < 0.6 else "  "
-            print(f"{mark} {bank_name} #{i:3d} OCR={text!r:20} -> {label} ({score:.2f})")
     for b in run.banks:
-        if b.kind in ("slot", "glyph", "money_glyph") and len(b.labels) > b.new_from:
+        if b.kind in ("name", "slot", "glyph", "money_glyph") and len(b.labels) > b.new_from:
             print(f"新しい{b.kind}テンプレート {len(b.labels) - b.new_from} 個: "
                   f"{run.template_dir / 'review' / b.name} を見て {b.json_path.name} にラベルを書いてください")
-    if not easyocr_available() and any(b.kind == "name" and None in b.labels for b in run.banks):
-        print("EasyOCR が入っていないため、新しいスキル名の見本にラベルを付けられませんでした（\"?\" になります）",
-              file=sys.stderr)
     t = run.timings
     print(
         f"\n{len(run.paths)} 枚 / 画面別 {run.screen_counts} / 結果画面以外 {run.not_result_count}"
         f" / 読込失敗 {run.read_error_count} / 新規テンプレート {run.new_template_count}\n"
-        f"切り出し {t['extract']:.1f}s, 照合 {t['match']:.1f}s, OCR {t['ocr']:.1f}s, "
+        f"切り出し {t['extract']:.1f}s, 照合 {t['match']:.1f}s, "
         f"合計 {t['total']:.1f}s -> {args.output}",
         file=sys.stderr,
     )
