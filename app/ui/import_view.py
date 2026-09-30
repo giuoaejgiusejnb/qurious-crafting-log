@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Callable
 import flet as ft
 
 from app.core.armor_defaults import reset_armor_defaults
-from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS
+from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS, resolve_ocr_params
 from app.core.importer import ImportSummary, import_block
 from app.core.settings import get_json_setting, get_setting, set_json_setting, set_setting
 from app.db.connection import get_connection
@@ -18,10 +18,6 @@ LAST_SELECTION_KEY = "import_label_last_selection"
 # 画像から取込（8bit）の設定を防具ごとに記憶する {防具名: {"base_slot", "zenny_step", "minus_skills"}}
 OCR_PARAMS_KEY = "ocr_params_by_armor"
 LAST_IMAGE_DIR_KEY = "ocr_last_image_dir"
-# 防具ごとの初期値（mhrise-skill-ocr での検証に使った防具。それ以外は空欄から入力する）
-_DEFAULT_OCR_PARAMS = {
-    "マッスル腕": {"base_slot": "6", "zenny_step": "4000", "minus_skills": "攻撃:2,火事場力:3"},
-}
 
 _PRESET_COLORS = [ft.Colors.RED_200, ft.Colors.BLUE_200, ft.Colors.GREEN_200]
 _CUSTOM_COLOR = ft.Colors.AMBER_100
@@ -199,8 +195,18 @@ def build_import_view(
         options=[ft.DropdownOption(key="4000", text="4000"), ft.DropdownOption(key="6000", text="6000")],
         value="4000",
     )
+    table_dropdown = ft.Dropdown(
+        label="抽選テーブル",
+        width=150,
+        options=[
+            ft.DropdownOption(key="5", text="5"),
+            ft.DropdownOption(key="6", text="6"),
+            ft.DropdownOption(key="none", text="なし（不明）"),
+        ],
+        tooltip="傀異錬成の抽選テーブル。取込時の仕様チェックに使う（なしの場合はチェックしない）",
+    )
     minus_skills_field = ft.TextField(
-        label="防具が元から持つスキル（任意）",
+        label="防具が元から持つスキル",
         hint_text="攻撃:2,火事場力:3",
         width=320,
         tooltip="「スキル名:元のLv」をカンマ区切りで。これ以外のスキルが下がっていたら読み取りの矛盾として記録します",
@@ -215,10 +221,11 @@ def build_import_view(
         finally:
             conn.close()
         saved = json.loads(raw) if raw else {}
-        params = saved.get(label) or _DEFAULT_OCR_PARAMS.get(label) or {}
-        base_slot_field.value = params.get("base_slot", "")
-        zenny_step_dropdown.value = params.get("zenny_step", "4000")
-        minus_skills_field.value = params.get("minus_skills", "")
+        params = resolve_ocr_params(saved, label)
+        base_slot_field.value = params["base_slot"]
+        zenny_step_dropdown.value = params["zenny_step"]
+        minus_skills_field.value = params["minus_skills"]
+        table_dropdown.value = params["table"] or "none"
 
     def save_ocr_params(label: str) -> None:
         conn = get_connection(db_path)
@@ -229,6 +236,7 @@ def build_import_view(
                 "base_slot": (base_slot_field.value or "").strip(),
                 "zenny_step": zenny_step_dropdown.value or "4000",
                 "minus_skills": (minus_skills_field.value or "").strip(),
+                "table": "" if table_dropdown.value in (None, "none") else table_dropdown.value,
             }
             set_setting(conn, OCR_PARAMS_KEY, json.dumps(saved, ensure_ascii=False))
             if selected_image_dir[0]:
@@ -473,7 +481,7 @@ def build_import_view(
                 "Switch で撮った「傀異強化結果」画面のスクリーンショット（*.jpg）を、"
                 "1回の連続した記録ごとに1つのフォルダに入れて選択してください。",
             ),
-            ft.Row([base_slot_field, zenny_step_dropdown, minus_skills_field]),
+            ft.Row([base_slot_field, zenny_step_dropdown, table_dropdown, minus_skills_field], wrap=True),
             ft.Row([select_dir_button, image_dir_text]),
             ft.Row([image_import_button]),
             progress_bar,
