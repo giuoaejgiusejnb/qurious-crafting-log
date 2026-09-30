@@ -54,7 +54,7 @@ def test_build_report_is_importable(tmp_path):
 def test_build_report_reports_missing_shots(tmp_path):
     records = [_record("a.jpg", _values("100")), _record("b.jpg", _values("88"))]
     report = build_report(records, 4, tmp_path)
-    assert any("2 回分撮れていない" in e for e in report.errors)
+    assert any("2回分の画像がありません" in e for e in report.errors)
 
 
 def test_user_template_dir_copies_bundled_templates(tmp_path):

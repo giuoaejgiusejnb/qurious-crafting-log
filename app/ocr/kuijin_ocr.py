@@ -689,12 +689,13 @@ def build_report(records: list, step_k: int, template_dir: Path,
         body = report_row(v, screen, hidden)
         if init is None or "?" in v["money_k"]:
             count = "?"
-            warnings.append(f"{name}: ゼニーが読めないため回数が不明")
+            warnings.append(f"{name}: 所持ゼニーが読めないため、何回目の練成か分かりません")
         else:
             spent = init - int(v["money_k"])
             if spent <= 0 or spent % step_k:
                 count = "?"
-                warnings.append(f"{name}: ゼニー {v['money_k']} が 1 回 {step_k * 1000} の減り方と合わない")
+                warnings.append(f"{name}: 所持ゼニー（{v['money_k']}千）が、1回 {step_k * 1000} ゼニーずつ減る計算と"
+                                f"合いません（「1回のゼニー」の設定違いか、読み間違いの疑い）")
             else:
                 count = spent // step_k
                 if count in seen:
@@ -705,7 +706,8 @@ def build_report(records: list, step_k: int, template_dir: Path,
                         lines[line_of[count]] = (str(count), v["money_k"], body)
                         kept[line_of[count]] = (name, screen, v)
                     elif kept_body != body and "?" not in "".join(body):
-                        warnings.append(f"{name}: {count} 回目が {kept_name} と重複しているが内容が違う（{kept_name} を残した）")
+                        warnings.append(f"{name}: {count}回目の画像が {kept_name} と重なっていますが、読み取った内容が"
+                                        f"違います（{kept_name} の方を取り込みました）")
                     continue
                 seen[count] = (name, body)
                 line_of[count] = len(lines)
@@ -723,7 +725,7 @@ def build_report(records: list, step_k: int, template_dir: Path,
 def describe_values(v: dict) -> str:
     """エラーの表示用に、読み取った値を短くまとめる（例: 防御 -6 / スロ +1 / 火 +2 / 奮闘 +1・激昂 +2）。"""
     names = {"fire": "火", "water": "水", "thunder": "雷", "ice": "氷", "dragon": "龍"}
-    parts = [f"防御 {v['defense']}", f"スロ {v['slot_add']}"]
+    parts = [f"防御力 {v['defense']}", f"スロット {v['slot_add']}"]
     parts += [f"{names[r]} {v[r]}" for r in SPEC_RESISTS if v[r] not in ("-", "")]
     skills = [f"{v[f'skill{i}']} {v[f'lv{i}']}" for i in range(1, MAX_SKILLS + 1) if v[f"skill{i}"]]
     return " / ".join(parts + (["・".join(skills)] if skills else []))
@@ -744,7 +746,7 @@ def check_spec(lines: list, kept: list, table: int, minus_skills: dict[str, int]
         else:
             reason = None
         if reason:
-            where = f"{count} 回目（{name}）" if count != "?" else name
+            where = f"{count}回目（{name}）" if count != "?" else name
             errors.append(f"{where}: {reason}（読み取り: {describe_values(v)}）")
     return errors
 
@@ -787,6 +789,9 @@ def check_consistency(records: list, template_dir: Path,
     スキルの最大レベルとアイコンの色は templates/skill_props.json（確認済みのデータから作った表）と比べる。
     表に無いスキルは、この回の値で登録し、その旨を知らせる。
     """
+    field_names = {"defense": "防御力", "fire": "火耐性", "water": "水耐性", "thunder": "雷耐性",
+                   "ice": "氷耐性", "dragon": "龍耐性"}
+    color_names = {"green": "緑", "orange": "オレンジ", "red": "赤", "": "なし", "?": "不明"}
     props_path = template_dir / SKILL_PROPS_FILE
     props = json.loads(props_path.read_text(encoding="utf-8")) if props_path.exists() else {}
     errors, added = [], {}
@@ -796,32 +801,36 @@ def check_consistency(records: list, template_dir: Path,
         for key in ["defense", *RESIST_NAMES]:
             limit = VALUE_LIMITS["defense" if key == "defense" else "resist"]
             if v[key] not in ("-", "") and "?" not in v[key] and abs(int(v[key])) > limit:
-                errors.append(f"{name}: {key} の増減 {v[key]} があり得る範囲（±{limit}）を超えている")
+                errors.append(f"{name}: {field_names[key]}の増減 {v[key]} が、ありえる範囲（±{limit}）を超えています"
+                              "（読み間違いの疑い）")
         for i in range(1, MAX_SKILLS + 1):
             skill, lv, feat = v[f"skill{i}"], v[f"lv{i}"], ex["features"].get(i)
             if not skill or feat is None or "?" in skill + lv:
                 continue
-            where = f"{name}: {i} つ目のスキル {skill} {lv}"
+            where = f"{name}: {i}つ目のスキル「{skill} {lv}」"
             if abs(int(lv)) > VALUE_LIMITS["level"]:
-                errors.append(f"{where} のレベルの増減があり得る範囲を超えている")
+                errors.append(f"{where} のレベルの増減が、ありえる範囲を超えています（読み間違いの疑い）")
             expected = "red" if int(lv) < 0 else "green" if "g" in feat["bar"] else "orange"
             if feat["color"] != expected:
-                errors.append(f"{where} の文字色が {feat['color']}（四角の並び {feat['bar']} からは {expected} のはず）")
+                errors.append(f"{where} の「Lv」の文字の色（{color_names.get(feat['color'], feat['color'])}）が、"
+                              f"レベルのマス目から予想される色（{color_names[expected]}）と違います（読み間違いの疑い）")
             if minus_skills is not None and int(lv) < 0:
                 if skill not in minus_skills:
-                    errors.append(f"{where}: 防具が元から持たないスキルが下がっている（下がるのは {'・'.join(minus_skills)} だけ）")
+                    errors.append(f"{where}: 防具が元から持っていないスキルが下がっています（下がるのは "
+                                  f"{'・'.join(minus_skills)} だけのはず。読み間違いか「防具が元から持つスキル」の入力違いの疑い）")
                 elif -int(lv) > minus_skills[skill]:
-                    errors.append(f"{where}: 元のレベル {minus_skills[skill]} より多く下がっている")
+                    errors.append(f"{where}: 元のレベル（Lv{minus_skills[skill]}）より多く下がっています"
+                                  "（読み間違いか「防具が元から持つスキル」の入力違いの疑い）")
             if skill not in props:
                 added.setdefault(skill, (len(feat["bar"]), feat["icon"], name))
                 continue
             if len(feat["bar"]) != props[skill]["max"]:
-                errors.append(f"{where} の四角が {len(feat['bar'])} 個（{skill} は {props[skill]['max']} 個のはず。"
-                              "スキル名かレベルの読み違いの疑い）")
+                errors.append(f"{where}: レベルのマス目が {len(feat['bar'])} 個で、{skill} の最大レベル"
+                              f"（{props[skill]['max']}）と合いません（スキル名かレベルの読み間違いの疑い）")
             if feat["icon"]:
                 icon = np.array([int(x) for x in feat["icon"].split(":")])
                 if np.linalg.norm(icon - np.array(props[skill]["icon"])) > ICON_TOLERANCE:
-                    errors.append(f"{where} のアイコンの色 {feat['icon']} が {skill} の色と違う（スキル名の読み違いの疑い）")
+                    errors.append(f"{where}: スキルのアイコンの色が {skill} の色と違います（スキル名の読み間違いの疑い）")
     for skill, (mx, icon, name) in added.items():
         props[skill] = {"max": mx, "icon": [int(x) for x in icon.split(":")] if icon else [], "unverified": name}
         print(f"新しいスキル {skill} の性質（最大レベル {mx}、アイコンの色 {icon}）を {name} から登録しました。"
@@ -848,18 +857,19 @@ def check_sequence(rows: list, step_k: int) -> list[str]:
         if prev is not None:
             p_name, p_money, p_body = prev
             diff = p_money - money
-            where = f"{p_name} ({p_money}) -> {name} ({money})"
+            where = f"{p_name}（{p_money}千ゼニー）→ {name}（{money}千ゼニー）"
             if diff == step_k:
                 pass
             elif diff == 0:
                 if p_body != body:
-                    errors.append(f"ゼニーが同じなのに内容が違う: {where}")
+                    errors.append(f"所持ゼニーが同じなのに、読み取った内容が違います（読み間違いの疑い）: {where}")
             elif diff > 0 and diff % step_k == 0:
-                errors.append(f"{diff // step_k - 1} 回分撮れていない: {where}")
+                errors.append(f"{diff // step_k - 1}回分の画像がありません（撮り忘れの疑い）: {where}")
             elif diff < 0:
-                errors.append(f"ゼニーが増えている（別の記録が混ざっている、または読み間違い）: {where}")
+                errors.append(f"所持ゼニーが増えています（別の記録の画像が混ざっているか、読み間違いの疑い）: {where}")
             else:
-                errors.append(f"減り方が 1 回 {step_k * 1000} の倍数でない（読み間違いか --zenny-step の指定違い）: {where}")
+                errors.append(f"所持ゼニーの減り方が 1回 {step_k * 1000} ゼニーの倍数になっていません"
+                              f"（読み間違いか「1回のゼニー」の設定違いの疑い）: {where}")
         prev = (name, money, body)
     return errors
 
