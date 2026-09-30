@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from app.ocr.kuijin_ocr import OcrSession
 
 LAST_SELECTION_KEY = "import_label_last_selection"
-# 画像から取込（8bit）の設定を防具ごとに記憶する {防具名: {"base_slot", "zenny_step", "minus_skills"}}
+# 画像から取込（8bit）の設定を防具ごとに記憶する {防具名: {"base_slot", "zenny_step", "minus_skills", "table"}}
 OCR_PARAMS_KEY = "ocr_params_by_armor"
 LAST_IMAGE_DIR_KEY = "ocr_last_image_dir"
 
@@ -360,7 +360,11 @@ def build_import_view(
         page.update()
 
     def do_image_import(
-        image_dir: str, base_slot: int, zenny_step: int, minus_skills: dict[str, int] | None
+        image_dir: str,
+        base_slot: int,
+        zenny_step: int,
+        minus_skills: dict[str, int] | None,
+        table: int | None,
     ) -> None:
         """画像の切り出しと見本との照合。確定していない見本があればラベル入力のダイアログを出す。"""
         # 画像読み取りの依存（numpy / OpenCV）は重いので、使うときだけ読み込む
@@ -374,7 +378,7 @@ def build_import_view(
 
         try:
             session = start_image_reading(
-                Path(image_dir), db_path.parent, base_slot, zenny_step, minus_skills, image_progress
+                Path(image_dir), db_path.parent, base_slot, zenny_step, minus_skills, image_progress, table
             )
         except NoImagesError as exc:
             status_text.value = str(exc)
@@ -418,7 +422,7 @@ def build_import_view(
             conn.close()
 
         run = result.run
-        extra = [f"読み取りの矛盾 {len(run.report.errors)}件"]
+        extra = [f"読み取りの矛盾 {len(run.report.errors)}件", f"仕様違反 {len(run.report.spec_errors)}件"]
         finish_import(result.summary, label, extra)
         status_text.value += (
             f"\n画像 {result.image_count}枚 / 結果画面 {sum(run.screen_counts.values())}枚"
@@ -459,7 +463,12 @@ def build_import_view(
         if label_radio_group.value:
             save_ocr_params(label_radio_group.value)
         page.run_thread(
-            do_image_import, image_dir, base_slot, int(zenny_step_dropdown.value or "4000"), minus_skills
+            do_image_import,
+            image_dir,
+            base_slot,
+            int(zenny_step_dropdown.value or "4000"),
+            minus_skills,
+            None if table_dropdown.value in (None, "none") else int(table_dropdown.value),
         )
 
     select_dir_button = ft.Button(content="フォルダを選択", icon=ft.Icons.FOLDER_OPEN)

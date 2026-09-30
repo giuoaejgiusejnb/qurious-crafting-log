@@ -52,6 +52,7 @@ import cv2
 import numpy as np
 
 from app.core.skill_master import SKILL_MASTER, UNKNOWN_SKILL_NAME
+from app.ocr.spec import RESISTS as SPEC_RESISTS, SpecChecker
 
 BASE_SIZE = (1280, 720)   # (幅, 高さ) この大きさにそろえてから処理する
 # 同梱の見本（確認済みのテンプレート）。CLI は既定でここを読み書きする。
@@ -633,22 +634,25 @@ class Report:
     errors: list[str]  # ゼニーの減り方・ゲームの仕様との矛盾（自己チェック）
     line_count: int
     duplicate_count: int   # 同じ回の重複として除いた枚数
+    spec_errors: list[str] = field(default_factory=list)   # 抽選の仕様で作れない結果（読み間違いの疑い）
 
 
 def build_report(records: list, step_k: int, template_dir: Path,
-                 minus_skills: dict[str, int] | None = None) -> Report:
+                 minus_skills: dict[str, int] | None = None, table: int | None = None) -> Report:
     """結果を「初期ゼニー / 回数,ゼニー,スロ,…」の形式にする。
 
     回数は所持金から求める: (初期ゼニー - ゼニー) / 1 回の金額。初期ゼニーは 1 枚目のゼニー + 1 回分。
     同じ回を複数枚撮った画像は 1 枚だけ残す。読めていない値（"?"）の無い画像を優先し、
     どちらも同じ条件なら先の 1 枚。結果画面以外の画像はここに来る前に除かれている。
     ゼニーは千単位（下 3 桁は捨てる）。
+    table（抽選テーブル）を渡したときは、残した行が抽選の仕様で作れるかも調べる（spec_errors）。
     """
     rows = [(name, ex["screen"], v) for name, ex, v in records if v is not None]
     first = next((v["money_k"] for _, _, v in rows if "?" not in v["money_k"]), None)
     init = int(first) + step_k if first is not None else None
     seen: dict[int, tuple[str, list[str]]] = {}
     lines: list[tuple[str, str, list[str]]] = []   # (回数, ゼニー, 残り)
+    kept: list[tuple[str, str, dict]] = []         # lines と同じ並びの、残した画像 (ファイル名, 画面, 値)
     line_of: dict[int, int] = {}                   # 回数 -> lines の位置
     warnings, dup = [], 0
     for name, screen, v in rows:
@@ -669,25 +673,54 @@ def build_report(records: list, step_k: int, template_dir: Path,
                     if "?" in "".join(kept_body) and "?" not in "".join(body):
                         seen[count] = (name, body)   # 前の画像は読めていない値があるので、こちらに差し替える
                         lines[line_of[count]] = (str(count), v["money_k"], body)
+                        kept[line_of[count]] = (name, screen, v)
                     elif kept_body != body and "?" not in "".join(body):
                         warnings.append(f"{name}: {count} 回目が {kept_name} と重複しているが内容が違う（{kept_name} を残した）")
                     continue
                 seen[count] = (name, body)
                 line_of[count] = len(lines)
         lines.append((str(count), v["money_k"], body))
+        kept.append((name, screen, v))
     header = ["回数", "ゼニー", "スロ", "コスト", "マイナス", "耐性"]
     header += [f"第{i}{k}" for i in range(1, REPORT_SKILLS + 1) for k in ("名", "値")] + ["対象"]
     text = (f"初期ゼニー,{init if init is not None else '?'}\n" + ",".join(header) + "\n"
             + "\n".join(",".join([c, z, *b]) for c, z, b in lines) + "\n")
     errors = warnings + check_sequence(rows, step_k) + check_consistency(records, template_dir, minus_skills)
-    return Report(text, errors, len(lines), dup)
+    spec_errors = check_spec(lines, kept, table, minus_skills) if table is not None else []
+    return Report(text, errors, len(lines), dup, spec_errors)
+
+
+def describe_values(v: dict) -> str:
+    """エラーの表示用に、読み取った値を短くまとめる（例: 防御 -6 / スロ +1 / 火 +2 / 奮闘 +1・激昂 +2）。"""
+    names = {"fire": "火", "water": "水", "thunder": "雷", "ice": "氷", "dragon": "龍"}
+    parts = [f"防御 {v['defense']}", f"スロ {v['slot_add']}"]
+    parts += [f"{names[r]} {v[r]}" for r in SPEC_RESISTS if v[r] not in ("-", "")]
+    skills = [f"{v[f'skill{i}']} {v[f'lv{i}']}" for i in range(1, MAX_SKILLS + 1) if v[f"skill{i}"]]
+    return " / ".join(parts + (["・".join(skills)] if skills else []))
+
+
+def check_spec(lines: list, kept: list, table: int, minus_skills: dict[str, int] | None) -> list[str]:
+    """取込形式に残した行のうち、抽選の仕様で作れないもの（読み間違いの疑い）を返す。
+
+    スキルがすべて写っている結果画面１だけを調べる（結果画面２は 4 つ目以降が写っていない）。
+    """
+    checker = SpecChecker(table, minus_skills)
+    errors = []
+    for (count, _, _), (name, screen, v) in zip(lines, kept):
+        if screen != "screen1":
+            continue
+        reason = checker.violation(v)
+        if reason:
+            where = f"{count} 回目（{name}）" if count != "?" else name
+            errors.append(f"{where}: {reason}（読み取り: {describe_values(v)}）")
+    return errors
 
 
 def write_report(out: str, report: Report) -> None:
     """build_report の結果を out と「out の名前_errors.txt」に書く（CLI 用）。"""
     with open(out, "w", encoding="utf-8", newline="\n") as f:
         f.write(report.text)
-    errors = report.errors
+    errors = report.errors + [f"仕様違反: {e}" for e in report.spec_errors]
     err_path = Path(out).with_name(Path(out).stem + "_errors.txt")
     with open(err_path, "w", encoding="utf-8", newline="\n") as f:
         f.write("\n".join(errors) + ("\n" if errors else ""))
@@ -944,6 +977,7 @@ class OcrSession:
     zenny_step: int
     minus_skills: dict[str, int] | None
     template_dir: Path
+    table: int | None = None   # 抽選テーブル（仕様のチェックに使う。None ならチェックしない）
     banks: dict[tuple[str, str], TemplateBank] = field(default_factory=dict)
     results: list[dict | None] = field(default_factory=list)
     screen_of: dict[str, str] = field(default_factory=dict)
@@ -1050,6 +1084,7 @@ def start_reading(
     jobs: int | None = None,
     use_processes: bool = True,
     progress_callback: ProgressCallback | None = None,
+    table: int | None = None,
 ) -> OcrSession:
     """画像を切り出して見本と照合する（結果はまだ作らない）。
 
@@ -1066,7 +1101,7 @@ def start_reading(
         extracted = _extract_all(paths, template_dir, jobs, False, progress_callback)
     t_extract = time.perf_counter() - start
 
-    session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir)
+    session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir, table)
     for path, ex in zip(paths, extracted):
         if ex is None or ex["screen"] is None:
             session.results.append(None)
@@ -1121,7 +1156,8 @@ def finish_reading(session: OcrSession) -> OcrRun:
             values["money_k"] = read_money(money_bank, money_ids)
         records.append((Path(path).name, ex, values))
 
-    report = build_report(records, session.zenny_step // 1000, session.template_dir, session.minus_skills)
+    report = build_report(records, session.zenny_step // 1000, session.template_dir, session.minus_skills,
+                          session.table)
     t = session.timings
     timings = {"extract": t["extract"], "match": t["match"], "total": time.perf_counter() - t["start"]}
     return OcrRun(report, records, session.paths, session.results, session.screen_of,
@@ -1137,6 +1173,7 @@ def read_images(
     jobs: int | None = None,
     use_processes: bool = True,
     progress_callback: ProgressCallback | None = None,
+    table: int | None = None,
 ) -> OcrRun:
     """画像を読み取り、qurious-crafting-log の取込形式のテキストと自己チェックの結果を返す。
 
@@ -1144,7 +1181,7 @@ def read_images(
     start_reading → apply_labels → finish_reading を使う。新しい見本は template_dir に保存する。
     """
     return finish_reading(start_reading(paths, base_slot, zenny_step, minus_skills, template_dir, jobs,
-                                        use_processes, progress_callback))
+                                        use_processes, progress_callback, table))
 
 
 # ---------------------------------------------------------------- main
@@ -1173,6 +1210,8 @@ def main() -> None:
     parser.add_argument("--minus-skills", metavar="スキル:元のLv,…",
                         help="防具が元から持つスキルと元のレベル（例: 攻撃:2,火事場力:3）。"
                              "これ以外のスキルが下がった・元のレベルより多く下がったらエラーにする")
+    parser.add_argument("--table", type=int, choices=(5, 6),
+                        help="防具の抽選テーブル（マッスル = 5、ギルパレ・クシャ = 6）。指定すると仕様違反も調べる")
     parser.add_argument("--templates", type=Path, default=BUNDLED_TEMPLATE_DIR,
                         help="見本（テンプレート）のフォルダ（既定: 同梱の app/ocr/templates）")
     args = parser.parse_args()
@@ -1193,7 +1232,7 @@ def main() -> None:
         sys.exit("画面判定用の見本がありません。先に --save-signature screen1 <結果画面の画像> を実行してください。")
 
     run = read_images(list_images(args.inputs), args.base_slot, args.zenny_step, minus_skills,
-                      args.templates, args.jobs)
+                      args.templates, args.jobs, table=args.table)
 
     if args.detail:
         write_detail_csv(args.detail, run.records)

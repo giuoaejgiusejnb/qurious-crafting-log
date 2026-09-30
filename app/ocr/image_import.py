@@ -46,6 +46,7 @@ def start_image_reading(
     zenny_step: int,
     minus_skills: dict[str, int] | None,
     progress_callback: PhaseProgressCallback | None = None,
+    table: int | None = None,
 ) -> OcrSession:
     """image_dir の *.jpg を撮影順に切り出し、見本と照合する。
 
@@ -63,6 +64,7 @@ def start_image_reading(
         template_dir=user_template_dir(data_dir),
         use_processes=can_use_processes(),
         progress_callback=(lambda d, t: progress_callback("ocr", d, t)) if progress_callback else None,
+        table=table,
     )
 
 
@@ -76,7 +78,8 @@ def finish_image_import(
     """labels（{(見本の名前, 番号): ラベル}）を見本に付けて保存し、読み取り結果を取込形式にして import_block で保存する。
 
     ラベルを付けなかった見本は "?" のまま（その行は「読み込みできなかった行」になる）。
-    読み取りの自己チェックで見つかった矛盾は、バッチのエラー（kind='ocr'）として保存する。
+    読み取りの自己チェックで見つかった矛盾は kind='ocr'、抽選の仕様で作れない結果は kind='spec' として、
+    バッチのエラーに保存する。
     """
     if labels:
         session.apply_labels(labels)
@@ -88,6 +91,7 @@ def finish_image_import(
         progress_callback=(lambda d, t: progress_callback("import", d, t)) if progress_callback else None,
         source=SOURCE_8BIT,
         ocr_issues=run.report.errors,
+        spec_issues=run.report.spec_errors,
     )
     return ImageImportResult(len(session.paths), run, summary)
 
@@ -101,7 +105,9 @@ def import_image_folder(
     minus_skills: dict[str, int] | None,
     label: str | None,
     progress_callback: PhaseProgressCallback | None = None,
+    table: int | None = None,
 ) -> ImageImportResult:
     """ラベル入力を挟まずに読み取りから保存までを行う（ラベルが確定していない見本は "?" のまま）。"""
-    session = start_image_reading(image_dir, data_dir, base_slot, zenny_step, minus_skills, progress_callback)
+    session = start_image_reading(image_dir, data_dir, base_slot, zenny_step, minus_skills, progress_callback,
+                                  table)
     return finish_image_import(conn, session, label, None, progress_callback)
