@@ -535,17 +535,16 @@ def build_import_view(
         page.update()
 
     def on_image_import_click(e: ft.Event[ft.Button]) -> None:
+        # 入力の誤りは、画面の下の状態表示だと気づきにくいので、ボタンの横に赤字で出す
         image_dir = selected_image_dir[0]
-        if not image_dir:
-            status_text.value = "画像のフォルダを選択してください"
-            page.update()
-            return
         base_slot_text = (base_slot_field.value or "").strip()
         error = _validate_ocr_params(base_slot_text, minus_skills_field.value or "")
         if error is None and not base_slot_text:
             error = "初期スロットを数字で入力してください"
-        if error:
-            status_text.value = error
+        if error is None and not image_dir:
+            error = "画像のフォルダを選択してください"
+        image_error_text.value = error or ""
+        if error or not image_dir:
             page.update()
             return
         from app.ocr.kuijin_ocr import parse_minus_skills
@@ -567,6 +566,7 @@ def build_import_view(
     select_dir_button.on_click = on_select_dir_click
     image_import_button = ft.Button(content="画像から取込")
     image_import_button.on_click = on_image_import_click
+    image_error_text = ft.Text("", color=ft.Colors.RED_700, weight=ft.FontWeight.BOLD)
 
     return ft.Column(
         [
@@ -584,7 +584,7 @@ def build_import_view(
             ),
             ft.Row([base_slot_field, zenny_step_dropdown, table_dropdown, minus_skills_field], wrap=True),
             ft.Row([select_dir_button, image_dir_text]),
-            ft.Row([image_import_button]),
+            ft.Row([image_import_button, image_error_text], wrap=True),
             progress_bar,
             status_text,
         ],

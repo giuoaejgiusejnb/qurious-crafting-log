@@ -24,6 +24,9 @@ _MARKER_TEXTS = {
     ),
 }
 
+# マイナスがあると確定している印は、マイナスのスキルと同じ色で表示する（「不明」は灰色）
+_MINUS_MARKERS = {HIDDEN_MINUS_SKILL_NAME, HIDDEN_SOME_MINUS_SKILL_NAME}
+
 _SKILLS_COLUMN_WIDTH = 240
 
 
@@ -50,7 +53,7 @@ def build_skills_wrap(
     resolved_positive = resolve_color(positive_color)
     resolved_negative = resolve_color(negative_color)
 
-    # 画像読み取り（8bit）の印（写っていない4つ目以降のスキル）は値が無いので、最後に灰色で出す
+    # 画像読み取り（8bit）の印（写っていない4つ目以降のスキル）は値が無いので、最後に出す
     skills = sorted(skills, key=lambda s: s[0] in MARKER_SKILL_NAMES)
 
     controls: list[ft.Control] = []
@@ -62,9 +65,13 @@ def build_skills_wrap(
         controls.append(
             ft.Text(
                 text,
-                color=ft.Colors.GREY_600
-                if marker
-                else resolved_negative if value < 0 else resolved_positive,
+                color=(
+                    resolved_negative
+                    if name in _MINUS_MARKERS or value < 0
+                    else ft.Colors.GREY_600
+                    if marker
+                    else resolved_positive
+                ),
                 tooltip=marker[1] if marker else None,
             )
         )
