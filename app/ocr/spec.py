@@ -153,3 +153,72 @@ class SpecChecker:
         reason = self._diagnose(draws, cost, int(values["slot_add"]),
                                 [_to_int(values[r]) for r in RESISTS], _to_int(values["defense"]))
         return reason
+
+
+# 結果画面２（4 つ目以降のスキルが写っていない）の、写っていないスキルの判定結果
+HIDDEN_ALL_MINUS = "all_minus"     # すべてマイナス
+HIDDEN_SOME_MINUS = "some_minus"   # マイナスが 1 個以上（プラスも含まれうる）
+HIDDEN_UNKNOWN = "unknown"         # 分からない
+HIDDEN_VIOLATION = "violation"     # どう仮定しても仕様で作れない（読み間違いの疑い）
+
+
+def classify_hidden(values: dict[str, str], initial_skills: dict[str, int] | None,
+                    checker: SpecChecker | None) -> str:
+    """結果画面２の写っていない 4 つ目以降のスキルが、マイナスかどうかを判定する。
+
+    スキルの表示順は「プラスをコストの高い順（同じコストどうしはランダム）→ マイナス」なので、
+    写っていないのは「3 つ目以下のコストのプラス」か「マイナス」。次の順に調べる:
+      1. 3 つ目がマイナスなら、写っていないのはすべてマイナス
+      2. 元から持つスキル以外のプラスが上限（5 − 元から持つスキルの数）に達していて、
+         写っていない元から持つスキルのプラス（コストが 3 つ目以下のもの）も無ければ、すべてマイナス
+      3. 写っていない分を「プラス k 個（各 +1）＋写っていない元から持つスキルのマイナス m 回」として
+         ありうる組み合わせを抽選の仕様で調べる（checker が無ければ調べない）
+           - k >= 1 の組み合わせがどれも作れなければ、すべてマイナス
+           - m = 0 の組み合わせがどれも作れなければ、マイナスが 1 個以上
+    元から持つスキルが分からないとき・読めていない値があるときは分からない。
+    """
+    fields = [values["defense"], values["slot_add"], *(values[r] for r in RESISTS)]
+    skills = [(values[f"skill{i}"], values[f"lv{i}"]) for i in (1, 2, 3)]
+    if initial_skills is None or any("?" in v for v in fields) \
+            or any(not n or "?" in n + lv or n not in SKILL_COST for n, lv in skills):
+        return HIDDEN_UNKNOWN
+    parsed = [(n, int(lv)) for n, lv in skills]
+    visible = {n for n, _ in parsed}
+    if parsed[2][1] < 0:
+        new_left, initial_plus = 0, []   # 並び順から、写っていないプラスは無い
+    else:
+        third_cost = SKILL_COST[parsed[2][0]]
+        new_left = MAX_SKILL_KINDS - len(initial_skills) - sum(
+            1 for n, lv in parsed if lv > 0 and n not in initial_skills)
+        initial_plus = [n for n in initial_skills if n not in visible and SKILL_COST[n] <= third_cost]
+    minus_by_order = new_left <= 0 and not initial_plus
+    if checker is None:
+        return HIDDEN_ALL_MINUS if minus_by_order else HIDDEN_UNKNOWN
+    # 以下、並び順・種類の上限で決まった場合も、マイナスだけの組み合わせが作れるかを確かめる
+    # （作れなければ読み間違いの疑い）
+
+    draws, cost = SpecChecker.skill_draws_and_cost(parsed)
+    slot_add, defense = int(values["slot_add"]), _to_int(values["defense"])
+    resists = [_to_int(values[r]) for r in RESISTS]
+    cheapest_new = min(c for c, _ in SKILL_MASTER)   # 元から持つスキル以外のプラスは最も安いコストで仮定する
+    plus_possible = minus_free_possible = any_possible = False
+    for k_new in range(max(new_left, 0) + 1):
+        for mask in range(1 << len(initial_plus)):
+            chosen = [initial_plus[j] for j in range(len(initial_plus)) if mask >> j & 1]
+            k = k_new + len(chosen)
+            plus_cost = k_new * cheapest_new + sum(SKILL_COST[n] for n in chosen)
+            pool = sum(lv for n, lv in initial_skills.items() if n not in visible and n not in chosen)
+            for m in range(pool + 1):
+                if k + m == 0:
+                    continue   # 結果画面２なので、写っていないスキルが 1 つ以上ある
+                if checker.feasible(draws + k + m, cost + plus_cost + m * SKILL_DOWN_COST, slot_add, resists, defense):
+                    any_possible = True
+                    plus_possible |= k >= 1
+                    minus_free_possible |= m == 0
+    if not any_possible:
+        return HIDDEN_VIOLATION
+    if not plus_possible:
+        return HIDDEN_ALL_MINUS
+    if not minus_free_possible:
+        return HIDDEN_SOME_MINUS
+    return HIDDEN_UNKNOWN

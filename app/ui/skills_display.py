@@ -1,7 +1,25 @@
 import flet as ft
 
 from app.core.skill_colors import DEFAULT_NEGATIVE_COLOR, DEFAULT_POSITIVE_COLOR, resolve_color
-from app.core.skill_master import UNKNOWN_SKILL_NAME
+from app.core.skill_master import (
+    HIDDEN_MINUS_SKILL_NAME,
+    HIDDEN_SOME_MINUS_SKILL_NAME,
+    MARKER_SKILL_NAMES,
+    UNKNOWN_SKILL_NAME,
+)
+
+# 画像読み取り（8bit）の結果画面２で、写っていない4つ目以降のスキルの印の表示と説明
+_MARKER_TEXTS = {
+    UNKNOWN_SKILL_NAME: ("他は不明", "画像に写っていない4つ目以降のスキルがあります（結果画面２）"),
+    HIDDEN_MINUS_SKILL_NAME: (
+        HIDDEN_MINUS_SKILL_NAME,
+        "画像に写っていない4つ目以降のスキルは、すべてマイナスです（結果画面２。どのスキルかは分かりません）",
+    ),
+    HIDDEN_SOME_MINUS_SKILL_NAME: (
+        HIDDEN_SOME_MINUS_SKILL_NAME,
+        "画像に写っていない4つ目以降のスキルに、マイナスが1個以上あります（結果画面２）",
+    ),
+}
 
 _SKILLS_COLUMN_WIDTH = 240
 
@@ -29,23 +47,22 @@ def build_skills_wrap(
     resolved_positive = resolve_color(positive_color)
     resolved_negative = resolve_color(negative_color)
 
-    # 画像読み取り（8bit）の「不明」（写っていない4つ目以降のスキル）は値が無いので、
-    # 「他は不明」として最後に灰色で出す
-    skills = sorted(skills, key=lambda s: s[0] == UNKNOWN_SKILL_NAME)
+    # 画像読み取り（8bit）の印（写っていない4つ目以降のスキル）は値が無いので、最後に灰色で出す
+    skills = sorted(skills, key=lambda s: s[0] in MARKER_SKILL_NAMES)
 
     controls: list[ft.Control] = []
     for i, (name, value) in enumerate(skills):
-        unknown = name == UNKNOWN_SKILL_NAME
-        text = "他は不明" if unknown else f"{name}{value:+d}"
+        marker = _MARKER_TEXTS.get(name)
+        text = marker[0] if marker else f"{name}{value:+d}"
         if i < len(skills) - 1:
             text += "、"
         controls.append(
             ft.Text(
                 text,
                 color=ft.Colors.GREY_600
-                if unknown
+                if marker
                 else resolved_negative if value < 0 else resolved_positive,
-                tooltip="画像に写っていない4つ目以降のスキルがあります（結果画面２）" if unknown else None,
+                tooltip=marker[1] if marker else None,
             )
         )
     return ft.Row(controls, wrap=True, spacing=0, run_spacing=0, width=width)

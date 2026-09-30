@@ -250,3 +250,12 @@ def test_parse_line_rejects_unreadable_skill_name():
     line = build_row(skills=[("回復速度?", 1)])
     with pytest.raises(ParseError, match="スキル名が読み取れていません"):
         parse_result_log_line(line)
+
+
+def test_parse_line_keeps_hidden_minus_markers():
+    """結果画面２の写っていないスキルの印（マイナスと確定したもの）も値0で取り込む。"""
+    for marker in ("何らかのマイナススキル", "不明（マイナススキルが一個以上）"):
+        line = build_row(deficiency="有", skills=[("攻撃", 1), ("見切り", 1), ("匠", 1), (marker, 0)])
+        result = parse_result_log_line(line.replace(f"{marker},0", f"{marker},"))
+        assert (result.skills[-1].name, result.skills[-1].value) == (marker, 0)
+        assert result.has_deficiency == 1

@@ -3,7 +3,7 @@ from pathlib import Path
 import flet as ft
 
 from app.core.armor_defaults import list_armors_using_skill_set
-from app.core.skill_master import ALL_MASTER_SKILL_NAMES, SKILL_MASTER, UNKNOWN_SKILL_NAME
+from app.core.skill_master import ALL_MASTER_SKILL_NAMES, MARKER_SKILL_NAMES, SKILL_MASTER
 from app.core.skill_sets import (
     delete_skill_set,
     get_skill_set,
@@ -128,8 +128,8 @@ def build_skill_set_manager_content(page: ft.Page, db_path: Path) -> ft.Control:
             sections.append(build_checkbox_rows(names, previously_selected))
 
         registered_names = set(_load_skill_names(db_path))
-        # 「不明」は画像に写っていないスキルの印なので、スキル集合には選べないようにする
-        extra_names = sorted(registered_names - ALL_MASTER_SKILL_NAMES - {UNKNOWN_SKILL_NAME})
+        # 「不明」などは画像に写っていないスキルの印なので、スキル集合には選べないようにする
+        extra_names = sorted(registered_names - ALL_MASTER_SKILL_NAMES - MARKER_SKILL_NAMES)
         if extra_names:
             sections.append(build_group_header("その他", extra_names))
             sections.append(

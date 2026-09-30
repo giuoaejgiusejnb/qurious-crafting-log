@@ -50,8 +50,21 @@ from typing import Callable
 import cv2
 import numpy as np
 
-from app.core.skill_master import SKILL_MASTER, UNKNOWN_SKILL_NAME
-from app.ocr.spec import RESISTS as SPEC_RESISTS, SpecChecker
+from app.core.skill_master import (
+    HIDDEN_MINUS_SKILL_NAME,
+    HIDDEN_SOME_MINUS_SKILL_NAME,
+    SKILL_MASTER,
+    UNKNOWN_SKILL_NAME,
+)
+from app.ocr.spec import (
+    HIDDEN_ALL_MINUS,
+    HIDDEN_SOME_MINUS,
+    HIDDEN_UNKNOWN,
+    HIDDEN_VIOLATION,
+    RESISTS as SPEC_RESISTS,
+    SpecChecker,
+    classify_hidden,
+)
 
 BASE_SIZE = (1280, 720)   # (幅, 高さ) この大きさにそろえてから処理する
 # 同梱の見本（確認済みのテンプレート）。CLI は既定でここを読み書きする。
@@ -605,8 +618,21 @@ def write_detail_csv(out: str, records: list) -> None:
                 writer.writerow([name, status, ex["screen"], ex["device"]] + row + feats)
 
 
-def report_row(values: dict, screen: str) -> list[str]:
-    """回数・ゼニーを除いた 1 行分（スロ, コスト, マイナス, 耐性, 第1名, 第1値, …, 対象）。"""
+# 結果画面２の写っていないスキルの判定結果 -> 取込形式に書く印と、マイナス（スキル欠け）が確定するか
+HIDDEN_MARKERS = {
+    HIDDEN_ALL_MINUS: (HIDDEN_MINUS_SKILL_NAME, True),
+    HIDDEN_SOME_MINUS: (HIDDEN_SOME_MINUS_SKILL_NAME, True),
+    HIDDEN_UNKNOWN: (UNKNOWN_SKILL_NAME, False),
+    HIDDEN_VIOLATION: (UNKNOWN_SKILL_NAME, False),
+}
+
+
+def report_row(values: dict, screen: str, hidden: str = HIDDEN_UNKNOWN) -> list[str]:
+    """回数・ゼニーを除いた 1 行分（スロ, コスト, マイナス, 耐性, 第1名, 第1値, …, 対象）。
+
+    hidden は結果画面２の写っていないスキルの判定結果（spec.classify_hidden）。写っていないスキルの印を
+    第 4 名に書き、マイナスが確定していればマイナスを「有」にする。
+    """
     slot = values["slot_add"]
     levels = [values[f"lv{i}"] for i in range(1, MAX_SKILLS + 1) if values[f"skill{i}"]]
     if any("?" in lv for lv in levels):
@@ -622,7 +648,10 @@ def report_row(values: dict, screen: str) -> list[str]:
             skills += [name, lv if "?" in lv else str(int(lv))]
     if screen == "screen2":
         # スキルが 4 つ以上あり 2 ページ目がある画面。4 つ目以降は写っていないので印を付ける
-        skills += [UNKNOWN_SKILL_NAME, ""]
+        marker, has_minus = HIDDEN_MARKERS[hidden]
+        skills += [marker, ""]
+        if has_minus:
+            minus = "有"
     skills += [""] * (2 * REPORT_SKILLS - len(skills))
     return ["?" if "?" in slot else str(int(slot)), values["cost"], minus, resist, *skills, "0"]
 
@@ -647,6 +676,7 @@ def build_report(records: list, step_k: int, template_dir: Path,
     table（抽選テーブル）を渡したときは、残した行が抽選の仕様で作れるかも調べる（spec_errors）。
     """
     rows = [(name, ex["screen"], v) for name, ex, v in records if v is not None]
+    checker = SpecChecker(table, minus_skills) if table is not None else None
     first = next((v["money_k"] for _, _, v in rows if "?" not in v["money_k"]), None)
     init = int(first) + step_k if first is not None else None
     seen: dict[int, tuple[str, list[str]]] = {}
@@ -655,7 +685,8 @@ def build_report(records: list, step_k: int, template_dir: Path,
     line_of: dict[int, int] = {}                   # 回数 -> lines の位置
     warnings, dup = [], 0
     for name, screen, v in rows:
-        body = report_row(v, screen)
+        hidden = classify_hidden(v, minus_skills, checker) if screen == "screen2" else HIDDEN_UNKNOWN
+        body = report_row(v, screen, hidden)
         if init is None or "?" in v["money_k"]:
             count = "?"
             warnings.append(f"{name}: ゼニーが読めないため回数が不明")
@@ -701,14 +732,17 @@ def describe_values(v: dict) -> str:
 def check_spec(lines: list, kept: list, table: int, minus_skills: dict[str, int] | None) -> list[str]:
     """取込形式に残した行のうち、抽選の仕様で作れないもの（読み間違いの疑い）を返す。
 
-    スキルがすべて写っている結果画面１だけを調べる（結果画面２は 4 つ目以降が写っていない）。
+    結果画面２は 4 つ目以降が写っていないので、写っていない分をどう仮定しても作れないときだけ違反にする。
     """
     checker = SpecChecker(table, minus_skills)
     errors = []
     for (count, _, _), (name, screen, v) in zip(lines, kept):
-        if screen != "screen1":
-            continue
-        reason = checker.violation(v)
+        if screen == "screen1":
+            reason = checker.violation(v)
+        elif classify_hidden(v, minus_skills, checker) == HIDDEN_VIOLATION:
+            reason = "写っている 3 つのスキルと、写っていない 4 つ目以降をどう仮定しても抽選で作れない"
+        else:
+            reason = None
         if reason:
             where = f"{count} 回目（{name}）" if count != "?" else name
             errors.append(f"{where}: {reason}（読み取り: {describe_values(v)}）")

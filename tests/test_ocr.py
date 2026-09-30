@@ -129,3 +129,23 @@ def test_unsupported_resolution_stops_before_reading(tmp_path):
     assert [(Path(p).name, size) for p, size in exc_info.value.files] == [("2.jpg", "1920x1080"), ("4.jpg", "1920x1080")]
     assert "1920x1080" in str(exc_info.value) and "1280x720" in str(exc_info.value)
     assert sorted(p.name for p in templates.iterdir()) == before
+
+
+def test_build_report_marks_hidden_minus(tmp_path):
+    """結果画面２で写っていないスキルがすべてマイナスと確定したら、印「何らかのマイナススキル」を付け、マイナスを「有」にする。"""
+    values = _values("100", "逆恨み", "+1")
+    values.update({"defense": "-11", "slot_add": "+0", "fire": "+2", "water": "-", "thunder": "-", "ice": "-",
+                   "dragon": "-", "skill2": "火事場力", "lv2": "+1", "skill3": "体力回復量UP", "lv3": "+1", "cost": "24"})
+    muscle = {"攻撃": 2, "火事場力": 3}
+
+    with_table = build_report([_record("a.jpg", values, screen="screen2")], 4, tmp_path, muscle, table=5)
+    row = with_table.text.splitlines()[2].split(",")
+    assert row[4] == "有" and row[12:14] == ["何らかのマイナススキル", ""]
+    results, errors = parse_result_log_block(with_table.text)
+    assert errors == [] and results[0].has_deficiency == 1
+    assert ("何らかのマイナススキル", 0) in [(s.name, s.value) for s in results[0].skills]
+
+    # 抽選テーブルが分からなければ、仕様では確定できないので「不明」のまま
+    without_table = build_report([_record("a.jpg", values, screen="screen2")], 4, tmp_path, muscle)
+    row = without_table.text.splitlines()[2].split(",")
+    assert row[4] == "無" and row[12] == "不明"

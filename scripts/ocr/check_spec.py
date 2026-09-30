@@ -1,7 +1,7 @@
 """読み取り結果が傀異錬成の抽選の仕様で作れる結果かを調べる（検算用）。
 
 判定はアプリの取込時と同じ app/ocr/spec.py を使う（仕様と、防御力の値を判定に使わない理由はそちらを参照）。
-スキルがすべて写っている結果画面１だけを調べる。
+結果画面２は、写っていない 4 つ目以降をどう仮定しても作れないときだけ仕様違反にする。
 
 使い方:
   python scripts/ocr/check_spec.py --table 5 --minus-skills 攻撃:2,火事場力:3 \\
@@ -16,7 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # リポジトリ直下（app パッケージ）を import できるようにする
 
 from app.ocr.kuijin_ocr import parse_minus_skills  # noqa: E402
-from app.ocr.spec import RESISTS, TABLES, SpecChecker  # noqa: E402
+from app.ocr.spec import HIDDEN_VIOLATION, RESISTS, TABLES, SpecChecker, classify_hidden  # noqa: E402
 
 
 def main() -> None:
@@ -29,18 +29,21 @@ def main() -> None:
     parser.add_argument("-o", "--output", required=True)
     args = parser.parse_args()
 
-    checker = SpecChecker(args.table, parse_minus_skills(args.minus_skills or ""))
-    counts = {"OK": 0, "仕様違反": 0, "判定外": 0}
+    initial_skills = parse_minus_skills(args.minus_skills or "")
+    checker = SpecChecker(args.table, initial_skills)
+    counts = {"OK": 0, "仕様違反": 0}
     out = []
     for path in args.detail_csv:
         with open(path, encoding="utf-8-sig") as f:
             for row in csv.DictReader(f):
                 if row["status"] not in ("ok", "check"):
                     continue
-                if row["screen"] != "screen1":
-                    counts["判定外"] += 1
-                    continue
-                reason = checker.violation(row)
+                if row["screen"] == "screen1":
+                    reason = checker.violation(row)
+                elif classify_hidden(row, initial_skills, checker) == HIDDEN_VIOLATION:
+                    reason = "写っている 3 つのスキルと、写っていない 4 つ目以降をどう仮定しても抽選で作れない"
+                else:
+                    reason = None
                 if reason is None:
                     counts["OK"] += 1
                     continue

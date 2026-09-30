@@ -76,3 +76,56 @@ def test_spec_issues_are_saved_as_batch_errors(tmp_path):
         assert errors.total == 1 and summary.error_count == 1
     finally:
         conn.close()
+
+
+def _screen2(defense, resists, skills, slot="+0"):
+    return _values(defense=defense, slot=slot, resists=resists, skills=skills)
+
+
+def test_hidden_all_minus_by_order():
+    """3 つ目がマイナスなら、写っていない 4 つ目以降もマイナス（マイナスはプラスの後ろに並ぶ）。"""
+    from app.ocr.spec import HIDDEN_ALL_MINUS, classify_hidden
+
+    v = _screen2("-", ("-",) * 5, [("奮闘", "+1"), ("激昂", "+1"), ("攻撃", "-1")])
+    assert classify_hidden(v, MUSCLE, None) == HIDDEN_ALL_MINUS
+
+
+def test_hidden_all_minus_by_kind_limit():
+    """元から持つスキル以外のプラスが上限（マッスル腕は 3 種類）に達していて、コストが 3 つ目以下の
+    元から持つスキル（火事場力 9・攻撃 15）も無いので、写っていないのはマイナスだけ。テーブル不要。"""
+    from app.ocr.spec import HIDDEN_ALL_MINUS, classify_hidden
+
+    v = _screen2("-6", ("-",) * 5, [("奮闘", "+1"), ("激昂", "+1"), ("ひるみ軽減", "+1")])
+    assert classify_hidden(v, MUSCLE, None) == HIDDEN_ALL_MINUS
+
+
+def test_hidden_all_minus_by_spec():
+    """0925_1 の実例: プラスが写っていないとすると 6 回・基礎コストに収まらない。"""
+    from app.ocr.spec import HIDDEN_ALL_MINUS, HIDDEN_UNKNOWN, classify_hidden
+
+    v = _screen2("-11", ("+2", "-", "-", "-", "-"), [("逆恨み", "+1"), ("火事場力", "+1"), ("体力回復量UP", "+1")])
+    assert classify_hidden(v, MUSCLE, SpecChecker(5, MUSCLE)) == HIDDEN_ALL_MINUS
+    assert classify_hidden(v, MUSCLE, None) == HIDDEN_UNKNOWN   # テーブルが分からなければ仕様では調べない
+
+
+def test_hidden_some_minus_by_spec():
+    """switch2 の実例: 「コスト 3 のプラス + 攻撃 -1」はありうるが、プラスだけでは作れない。"""
+    from app.ocr.spec import HIDDEN_SOME_MINUS, classify_hidden
+
+    v = _screen2("-5", ("-",) * 5, [("激昂", "+1"), ("火事場力", "+1"), ("ひるみ軽減", "+1")])
+    assert classify_hidden(v, MUSCLE, SpecChecker(5, MUSCLE)) == HIDDEN_SOME_MINUS
+
+
+def test_hidden_unknown_without_initial_skills():
+    from app.ocr.spec import HIDDEN_UNKNOWN, classify_hidden
+
+    v = _screen2("-", ("-",) * 5, [("奮闘", "+1"), ("激昂", "+1"), ("攻撃", "-1")])
+    assert classify_hidden(v, None, SpecChecker(5)) == HIDDEN_UNKNOWN
+
+
+def test_hidden_violation():
+    """写っている分だけで 6 回を使い切っていると、4 つ目以降を置く余地が無い。"""
+    from app.ocr.spec import HIDDEN_VIOLATION, classify_hidden
+
+    v = _screen2("+2", ("-",) * 5, [("ひるみ軽減", "+2"), ("防御", "+2"), ("滑走強化", "+2")])
+    assert classify_hidden(v, MUSCLE, SpecChecker(5, MUSCLE)) == HIDDEN_VIOLATION

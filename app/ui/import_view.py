@@ -211,7 +211,10 @@ def build_import_view(
         label="防具が元から持つスキル",
         hint_text="攻撃:2,火事場力:3",
         width=320,
-        tooltip="「スキル名:元のLv」をカンマ区切りで。これ以外のスキルが下がっていたら読み取りの矛盾として記録します",
+        tooltip=(
+            "「スキル名:元のLv」をカンマ区切りで。これ以外のスキルが下がっていたら読み取りの矛盾として記録します。"
+            "結果画面２（スキルが4つ以上）で、写っていないスキルがマイナスかどうかの判定にも使います"
+        ),
     )
     image_dir_text = ft.Text("フォルダ未選択", italic=True)
     selected_image_dir: list[str | None] = [None]
