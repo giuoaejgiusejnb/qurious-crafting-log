@@ -1,6 +1,7 @@
 import flet as ft
 
 from app.core.skill_colors import DEFAULT_NEGATIVE_COLOR, DEFAULT_POSITIVE_COLOR, resolve_color
+from app.core.skill_master import UNKNOWN_SKILL_NAME
 
 _SKILLS_COLUMN_WIDTH = 240
 
@@ -28,15 +29,23 @@ def build_skills_wrap(
     resolved_positive = resolve_color(positive_color)
     resolved_negative = resolve_color(negative_color)
 
+    # 画像読み取り（8bit）の「不明」（写っていない4つ目以降のスキル）は値が無いので、
+    # 「他は不明」として最後に灰色で出す
+    skills = sorted(skills, key=lambda s: s[0] == UNKNOWN_SKILL_NAME)
+
     controls: list[ft.Control] = []
     for i, (name, value) in enumerate(skills):
-        text = f"{name}{value:+d}"
+        unknown = name == UNKNOWN_SKILL_NAME
+        text = "他は不明" if unknown else f"{name}{value:+d}"
         if i < len(skills) - 1:
             text += "、"
         controls.append(
             ft.Text(
                 text,
-                color=resolved_negative if value < 0 else resolved_positive,
+                color=ft.Colors.GREY_600
+                if unknown
+                else resolved_negative if value < 0 else resolved_positive,
+                tooltip="画像に写っていない4つ目以降のスキルがあります（結果画面２）" if unknown else None,
             )
         )
     return ft.Row(controls, wrap=True, spacing=0, run_spacing=0, width=width)

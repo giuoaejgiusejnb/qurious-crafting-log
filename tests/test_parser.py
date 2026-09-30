@@ -236,3 +236,17 @@ def test_real_sample_data_row75_has_four_skills():
         ("災禍転福", -1),
         ("火事場力", -1),
     ]
+
+
+def test_parse_line_keeps_unknown_skill_from_result_screen2():
+    """画像読み取り（8bit）の結果画面２の行。写っていない4つ目以降のスキルは値0の「不明」として取り込む。"""
+    line = build_row(skills=[("攻撃", 1), ("見切り", 1), ("匠", 1), ("不明", 0)]).replace("不明,0", "不明,")
+    result = parse_result_log_line(line)
+    assert [(s.name, s.value) for s in result.skills] == [("攻撃", 1), ("見切り", 1), ("匠", 1), ("不明", 0)]
+
+
+def test_parse_line_rejects_unreadable_skill_name():
+    """画像読み取りで名前が確定しなかったスキル（末尾や全体が「?」）は登録しない。"""
+    line = build_row(skills=[("回復速度?", 1)])
+    with pytest.raises(ParseError, match="スキル名が読み取れていません"):
+        parse_result_log_line(line)

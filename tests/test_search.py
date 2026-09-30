@@ -449,3 +449,16 @@ def test_fetch_distinct_import_dates_returns_sorted_unique_dates(conn):
     conn.commit()
 
     assert fetch_distinct_import_dates(conn) == ["2026-08-21", "2026-08-22"]
+
+
+def test_unknown_skill_does_not_change_threshold_search(conn):
+    """結果画面２の「不明」（値0）は、スキル集合検索のしきい値判定に影響しない。"""
+    line = build_row(zeny_count=1, skills=[("攻撃", 1), ("見切り", 1), ("匠", 1), ("不明", 0)])
+    summary = import_block(conn, line.replace("不明,0", "不明,"), source="8bit")
+    registry = SkillRegistry(conn)
+    attack, unknown = registry.get_or_create_id("攻撃"), registry.get_or_create_id("不明")
+
+    hits = search_results(conn, SearchParams(allowed_skill_ids=[attack], threshold=1))
+    assert [r.batch_id for r in hits] == [summary.batch_id]
+    assert search_results(conn, SearchParams(allowed_skill_ids=[unknown], threshold=1)) == []
+    assert ("不明", 0) in fetch_skill_breakdown(conn, [hits[0].id])[hits[0].id]

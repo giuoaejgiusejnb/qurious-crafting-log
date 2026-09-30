@@ -1,6 +1,7 @@
 import unicodedata
 
 from app.core.models import ParsedResult, ParsedSkill
+from app.core.skill_master import UNKNOWN_SKILL_NAME
 
 FIXED_FIELD_COUNT = 6  # 回数,ゼニー,スロ,コスト,マイナス,耐性
 SKILL_SLOT_COUNT = 6  # 第1〜第6の(名前,値)ペア
@@ -82,6 +83,14 @@ def parse_result_log_line(line: str) -> ParsedResult:
         raw_value = fields[value_index].strip()
         if not raw_name:
             continue
+        # 以下の2つは画像読み取り（8bit）の出力にだけ現れる。
+        # 「不明」は結果画面２の写っていない4つ目以降のスキル。値は分からないので0で記録する
+        if raw_name == UNKNOWN_SKILL_NAME:
+            skills.append(ParsedSkill(name=UNKNOWN_SKILL_NAME, value=0))
+            continue
+        # 名前が確定しなかったスキルは、実在しないスキル名が登録されないよう読み込めない行にする
+        if "?" in raw_name:
+            raise ParseError(f"スキル名が読み取れていません: {raw_name}\n（行全体: {line}）")
         try:
             value = int(raw_value)
         except ValueError as exc:

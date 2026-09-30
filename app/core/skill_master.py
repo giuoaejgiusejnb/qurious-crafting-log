@@ -65,3 +65,7 @@ SKILL_MASTER: list[tuple[int, list[str]]] = [
 ]
 
 ALL_MASTER_SKILL_NAMES: set[str] = {name for _, names in SKILL_MASTER for name in names}
+
+# 練成画像の読み取り（8bit）で、結果画面２（スキルが4つ以上）の画像に写っていない4つ目以降のスキル。
+# 値0のスキルとして記録する（検索のしきい値判定には影響せず、「写っていないスキルがある」印になる）
+UNKNOWN_SKILL_NAME = "不明"
