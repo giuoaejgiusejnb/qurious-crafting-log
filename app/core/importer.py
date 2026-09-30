@@ -10,6 +10,9 @@ from app.core.skill_registry import SkillRegistry
 
 ProgressCallback = Callable[[int, int], None]
 
+SOURCE_NX = "nx"  # NX Macro Controllerが出力したresult_logのテキスト
+SOURCE_8BIT = "8bit"  # 練成画像を読み取って作ったresult_log（app/ocr）
+
 # 回数の欠番を「飛ばされている行」として記録する際、この幅を超える欠落は
 # マクロの長時間停止やゼニーOCRの誤読による外れ値とみなし、記録しない。
 # 幽霊行の除去で生じる欠番は高々1〜数回分のため、これで十分カバーできる。
@@ -124,6 +127,8 @@ def import_block(
     text: str,
     label: str | None = None,
     progress_callback: ProgressCallback | None = None,
+    source: str = SOURCE_NX,
+    ocr_issues: list[str] | None = None,
 ) -> ImportSummary:
     """result_logのテキストブロックをパースし、1つの取込バッチとしてDBに保存する。
 
@@ -131,6 +136,8 @@ def import_block(
     - 回数が連続で重複する幽霊行は1行に畳んでから保存する。
     - 畳んだ結果の回数列に欠番があれば「飛ばされている行」として記録する。
     パースエラーと欠番は import_issues テーブルに保存し、履歴タブの「エラー」欄で参照する。
+    sourceは取込元（SOURCE_NX / SOURCE_8BIT）。ocr_issuesは画像読み取りの自己チェックで
+    見つかった矛盾で、同じく import_issues に保存する。
     """
     parsed, errors = parse_result_log_block(text)
     results, dropped_duplicate_count = _dedupe_consecutive_duplicates(parsed)
@@ -148,9 +155,9 @@ def import_block(
 
     imported_at = dt.datetime.now().isoformat(timespec="seconds")
     cur = conn.execute(
-        "INSERT INTO import_batches (imported_at, label, row_count, errors_analyzed) "
-        "VALUES (?, ?, ?, 1)",
-        (imported_at, label, len(results)),
+        "INSERT INTO import_batches (imported_at, label, row_count, errors_analyzed, source) "
+        "VALUES (?, ?, ?, 1, ?)",
+        (imported_at, label, len(results), source),
     )
     batch_id = cur.lastrowid
     assert batch_id is not None  # INSERT直後なので必ず採番されている
@@ -176,6 +183,15 @@ def import_block(
                 (batch_id, count, None if zeny is None else str(zeny))
                 for count, zeny in skipped_results
             ],
+        )
+
+    if ocr_issues:
+        conn.executemany(
+            """
+            INSERT INTO import_issues (batch_id, kind, line_number, zeny_count, detail)
+            VALUES (?, 'ocr', NULL, NULL, ?)
+            """,
+            [(batch_id, detail) for detail in ocr_issues],
         )
 
     registry = SkillRegistry(conn)
@@ -224,7 +240,7 @@ def import_block(
     return ImportSummary(
         batch_id=batch_id,
         imported_count=total,
-        error_count=len(errors) + len(skipped_results),
+        error_count=len(errors) + len(skipped_results) + len(ocr_issues or []),
         errors=errors,
         skipped_results=skipped_results,
         dropped_duplicate_count=dropped_duplicate_count,

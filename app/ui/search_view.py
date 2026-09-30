@@ -52,11 +52,11 @@ def _load_batch_options(db_path: Path) -> list[tuple[int, str]]:
     conn = get_connection(db_path)
     try:
         rows = conn.execute(
-            "SELECT id, imported_at, label FROM import_batches ORDER BY id DESC"
+            "SELECT id, imported_at, label, source FROM import_batches ORDER BY id DESC"
         ).fetchall()
         return [
-            (batch_id, f"#{batch_id} {imported_at} {label or ''}".strip())
-            for batch_id, imported_at, label in rows
+            (batch_id, f"#{batch_id} {imported_at} [{source}] {label or ''}".strip())
+            for batch_id, imported_at, label, source in rows
         ]
     finally:
         conn.close()

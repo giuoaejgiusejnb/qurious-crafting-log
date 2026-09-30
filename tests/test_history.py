@@ -163,3 +163,47 @@ def test_delete_batch_removes_import_issues(conn):
     assert conn.execute(
         "SELECT COUNT(*) FROM import_issues WHERE batch_id = ?", (summary.batch_id,)
     ).fetchone()[0] == 0
+
+
+def test_list_batches_reports_source(conn):
+    import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 1)]))
+    import_block(conn, build_row(zeny_count=1, skills=[("攻撃", 1)]), source="8bit")
+
+    assert [b.source for b in list_batches(conn)] == ["8bit", "nx"]
+
+
+def test_fetch_batch_errors_returns_ocr_issues(conn):
+    summary = import_block(
+        conn,
+        build_row(zeny_count=1, skills=[("攻撃", 1)]),
+        source="8bit",
+        ocr_issues=["a.jpg: 1 つ目のスキル 攻撃 +1 の文字色が red", "2 回分撮れていない: x -> y"],
+    )
+
+    errors = fetch_batch_errors(conn, summary.batch_id)
+
+    assert errors.ocr == ["a.jpg: 1 つ目のスキル 攻撃 +1 の文字色が red", "2 回分撮れていない: x -> y"]
+    assert errors.total == 2
+    assert summary.error_count == 2
+    assert list_batches(conn)[0].error_count == 2
+
+
+def test_migration_marks_existing_batches_as_nx(tmp_path):
+    """取込元（source）列の追加前のDBでは、既存バッチはすべて nx になる。"""
+    import sqlite3
+
+    db = tmp_path / "legacy.db"
+    legacy = sqlite3.connect(db)
+    legacy.execute(
+        "CREATE TABLE import_batches (id INTEGER PRIMARY KEY, imported_at TEXT NOT NULL, "
+        "label TEXT, row_count INTEGER NOT NULL)"
+    )
+    legacy.execute("INSERT INTO import_batches (imported_at, label, row_count) VALUES ('2024-01-01', '旧', 1)")
+    legacy.commit()
+    legacy.close()
+
+    migrated = get_connection(db)
+    try:
+        assert [b.source for b in list_batches(migrated)] == ["nx"]
+    finally:
+        migrated.close()

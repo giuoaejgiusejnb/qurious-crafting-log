@@ -9,14 +9,16 @@ class BatchInfo:
     label: str | None
     row_count: int
     errors_analyzed: int = 0  # 取込時にエラー検出を行ったか（機能追加前のバッチは0）
-    error_count: int = 0  # import_issues の件数（読み込めなかった行 + 飛ばされている練成）
+    error_count: int = 0  # import_issues の件数（読み込めなかった行 + 飛ばされている練成 + 読み取りの矛盾）
+    source: str = "nx"  # 取込元（nx / 8bit）
 
 
 def list_batches(conn: sqlite3.Connection) -> list[BatchInfo]:
     rows = conn.execute(
         """
         SELECT b.id, b.imported_at, b.label, b.row_count, b.errors_analyzed,
-               (SELECT COUNT(*) FROM import_issues WHERE batch_id = b.id) AS error_count
+               (SELECT COUNT(*) FROM import_issues WHERE batch_id = b.id) AS error_count,
+               b.source
         FROM import_batches b
         ORDER BY b.id DESC
         """
@@ -45,14 +47,16 @@ class BatchErrors:
     unparsable: list[tuple[int, int | None, str]] = field(default_factory=list)
     # 飛ばされている練成 [(練成回数, 推定ゼニー or None), ...]（練成回数の昇順）
     skipped: list[tuple[int, int | None]] = field(default_factory=list)
+    # 画像読み取り（8bit）の自己チェックで見つかった矛盾の内容
+    ocr: list[str] = field(default_factory=list)
 
     @property
     def total(self) -> int:
-        return len(self.unparsable) + len(self.skipped)
+        return len(self.unparsable) + len(self.skipped) + len(self.ocr)
 
 
 def fetch_batch_errors(conn: sqlite3.Connection, batch_id: int) -> BatchErrors:
-    """バッチの取込時に検出した問題（読み込めなかった行・飛ばされている練成）を返す。"""
+    """バッチの取込時に検出した問題（読み込めなかった行・飛ばされている練成・読み取りの矛盾）を返す。"""
     rows = conn.execute(
         """
         SELECT kind, line_number, zeny_count, detail
@@ -70,6 +74,8 @@ def fetch_batch_errors(conn: sqlite3.Connection, batch_id: int) -> BatchErrors:
         elif kind == "skipped":
             zeny = int(detail) if detail is not None else None
             errors.skipped.append((zeny_count, zeny))
+        elif kind == "ocr":
+            errors.ocr.append(detail or "")
     errors.skipped.sort()
     return errors
 

@@ -83,6 +83,15 @@ def build_history_view(
                     ft.Text(f"練成回数：{count}　　ゼニー：{zeny_disp}", selectable=True)
                 )
 
+        ocr_controls: list[ft.Control] = []
+        if errors.ocr:
+            # 画像読み取り（8bit）のバッチだけ。自己チェックで見つかった矛盾
+            ocr_controls = [
+                ft.Divider(),
+                ft.Text("画像読み取りの矛盾（要確認）", weight=ft.FontWeight.BOLD),
+                *(ft.Text(f"・{detail}", selectable=True) for detail in errors.ocr),
+            ]
+
         content = ft.Column(
             [
                 ft.Text("読み込みできなかった行", weight=ft.FontWeight.BOLD),
@@ -90,6 +99,7 @@ def build_history_view(
                 ft.Divider(),
                 ft.Text("飛ばされている練成", weight=ft.FontWeight.BOLD),
                 *skipped_controls,
+                *ocr_controls,
             ],
             spacing=6,
             scroll=ft.ScrollMode.AUTO,
@@ -169,6 +179,7 @@ def build_history_view(
                 ft.Text("バッチID", width=100, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
                 ft.Text("防具", width=140, weight=ft.FontWeight.BOLD),
+                ft.Text("取込元", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("件数", width=80, weight=ft.FontWeight.BOLD),
                 ft.Text("エラー", width=70, weight=ft.FontWeight.BOLD),
                 ft.Text("", width=60, weight=ft.FontWeight.BOLD),
@@ -187,6 +198,7 @@ def build_history_view(
                                     ft.Text(f"#{batch.id}", width=100),
                                     ft.Text(batch.imported_at, width=160),
                                     ft.Text(batch.label or "", width=140),
+                                    ft.Text(batch.source, width=60),
                                     ft.Text(str(batch.row_count), width=80),
                                 ]
                             ),
