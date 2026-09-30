@@ -26,6 +26,35 @@ _CUSTOM_COLOR = ft.Colors.AMBER_100
 _OPTIONS_PER_ROW = 4
 
 
+def _zenny_step_options() -> list[ft.DropdownOption]:
+    return [ft.DropdownOption(key="4000", text="4000"), ft.DropdownOption(key="6000", text="6000")]
+
+
+def _table_options() -> list[ft.DropdownOption]:
+    return [
+        ft.DropdownOption(key="5", text="5"),
+        ft.DropdownOption(key="6", text="6"),
+        ft.DropdownOption(key="none", text="なし（不明）"),
+    ]
+
+
+def _validate_ocr_params(base_slot: str, minus_skills: str) -> str | None:
+    """画像取込の設定の入力を調べ、問題があれば表示する文を返す（空欄は問題なしとする）。"""
+    from app.core.skill_master import ALL_MASTER_SKILL_NAMES
+    from app.ocr.kuijin_ocr import parse_minus_skills
+
+    if base_slot and not base_slot.isdigit():
+        return "初期スロットは数字で入力してください"
+    try:
+        skills = parse_minus_skills(minus_skills) or {}
+    except ValueError:
+        return "防具が元から持つスキルは「スキル名:元のLv」をカンマで区切って入力してください（例: 攻撃:2,火事場力:3）"
+    unknown = [name for name in skills if name not in ALL_MASTER_SKILL_NAMES]
+    if unknown:
+        return f"スキル名が一覧にありません: {'、'.join(unknown)}"
+    return None
+
+
 def build_import_view(
     page: ft.Page,
     db_path: Path,
@@ -79,6 +108,7 @@ def build_import_view(
             reset_armor_defaults(conn, name)
         finally:
             conn.close()
+        store_ocr_params(name, None)   # 画像取込の設定も消す
 
         if label_radio_group.value == name:
             label_radio_group.value = DEFAULT_EQUIPMENT_OPTIONS[0]
@@ -140,17 +170,38 @@ def build_import_view(
     label_radio_group.on_change = on_selection_change
 
     new_option_field = ft.TextField(label="装備名", autofocus=True)
+    # 画像から取込（8bit）の設定。空欄でもよく、後から取込タブで入力できる
+    new_base_slot_field = ft.TextField(label="初期スロット", width=120, keyboard_type=ft.KeyboardType.NUMBER)
+    new_zenny_step_dropdown = ft.Dropdown(label="1回のゼニー", width=140, options=_zenny_step_options(), value="4000")
+    new_table_dropdown = ft.Dropdown(label="抽選テーブル", width=150, options=_table_options(), value="none")
+    new_minus_skills_field = ft.TextField(label="防具が元から持つスキル", hint_text="攻撃:2,火事場力:3", width=320)
+    add_error_text = ft.Text("", color=ft.Colors.RED_700)
 
     def close_add_dialog(e: ft.Event[ft.TextButton] | None = None) -> None:
         page.pop_dialog()
 
     def confirm_add_option(e: ft.Event[ft.Button]) -> None:
         name = (new_option_field.value or "").strip()
-        new_option_field.value = ""
         if not name:
             page.pop_dialog()
             return
+        base_slot = (new_base_slot_field.value or "").strip()
+        minus_skills = (new_minus_skills_field.value or "").strip()
+        error = _validate_ocr_params(base_slot, minus_skills)
+        if error:
+            add_error_text.value = error
+            page.update()
+            return
 
+        store_ocr_params(
+            name,
+            {
+                "base_slot": base_slot,
+                "zenny_step": new_zenny_step_dropdown.value or "4000",
+                "minus_skills": minus_skills,
+                "table": "" if new_table_dropdown.value in (None, "none") else new_table_dropdown.value,
+            },
+        )
         if name not in all_options:
             all_options.append(name)
             custom_only = [o for o in all_options if o not in DEFAULT_EQUIPMENT_OPTIONS]
@@ -163,13 +214,24 @@ def build_import_view(
 
         label_radio_group.value = name
         persist_last_selection(name)
+        load_ocr_params(name)
         page.pop_dialog()
         page.update()
 
     add_dialog = ft.AlertDialog(
         modal=True,
         title=ft.Text("装備を追加"),
-        content=new_option_field,
+        content=ft.Column(
+            [
+                new_option_field,
+                ft.Text("練成画像から取込（8bit）で使う設定（空欄でもよく、後から取込タブで入力できます）", size=12),
+                ft.Row([new_base_slot_field, new_zenny_step_dropdown, new_table_dropdown]),
+                new_minus_skills_field,
+                add_error_text,
+            ],
+            tight=True,
+            width=460,
+        ),
         actions=[
             ft.TextButton(content="キャンセル", on_click=close_add_dialog),
             ft.Button(content="追加", on_click=confirm_add_option),
@@ -178,6 +240,11 @@ def build_import_view(
 
     def open_add_dialog(e: ft.Event[ft.IconButton]) -> None:
         new_option_field.value = ""
+        new_base_slot_field.value = ""
+        new_zenny_step_dropdown.value = "4000"
+        new_table_dropdown.value = "none"
+        new_minus_skills_field.value = ""
+        add_error_text.value = ""
         page.show_dialog(add_dialog)
 
     add_option_button = ft.IconButton(icon=ft.Icons.ADD, tooltip="装備を追加", on_click=open_add_dialog)
@@ -194,17 +261,13 @@ def build_import_view(
     zenny_step_dropdown = ft.Dropdown(
         label="1回のゼニー",
         width=140,
-        options=[ft.DropdownOption(key="4000", text="4000"), ft.DropdownOption(key="6000", text="6000")],
+        options=_zenny_step_options(),
         value="4000",
     )
     table_dropdown = ft.Dropdown(
         label="抽選テーブル",
         width=150,
-        options=[
-            ft.DropdownOption(key="5", text="5"),
-            ft.DropdownOption(key="6", text="6"),
-            ft.DropdownOption(key="none", text="なし（不明）"),
-        ],
+        options=_table_options(),
         tooltip="傀異錬成の抽選テーブル。取込時の仕様チェックに使う（なしの場合はチェックしない）",
     )
     minus_skills_field = ft.TextField(
@@ -232,22 +295,30 @@ def build_import_view(
         minus_skills_field.value = params["minus_skills"]
         table_dropdown.value = params["table"] or "none"
 
-    def save_ocr_params(label: str) -> None:
+    def store_ocr_params(label: str, params: dict[str, str] | None) -> None:
+        """防具の取込設定を保存する。params が None ならその防具の設定を消す。"""
         conn = get_connection(db_path)
         try:
             raw = get_setting(conn, OCR_PARAMS_KEY)
             saved = json.loads(raw) if raw else {}
-            saved[label] = {
+            if params is None:
+                saved.pop(label, None)
+            else:
+                saved[label] = params
+            set_setting(conn, OCR_PARAMS_KEY, json.dumps(saved, ensure_ascii=False))
+        finally:
+            conn.close()
+
+    def save_ocr_params(label: str) -> None:
+        store_ocr_params(
+            label,
+            {
                 "base_slot": (base_slot_field.value or "").strip(),
                 "zenny_step": zenny_step_dropdown.value or "4000",
                 "minus_skills": (minus_skills_field.value or "").strip(),
                 "table": "" if table_dropdown.value in (None, "none") else table_dropdown.value,
-            }
-            set_setting(conn, OCR_PARAMS_KEY, json.dumps(saved, ensure_ascii=False))
-            if selected_image_dir[0]:
-                set_setting(conn, LAST_IMAGE_DIR_KEY, str(Path(selected_image_dir[0]).parent))
-        finally:
-            conn.close()
+            },
+        )
 
     load_ocr_params(last_selection)
 
@@ -351,6 +422,12 @@ def build_import_view(
         )
         if path:
             selected_image_dir[0] = path
+            # 次に選ぶときは、選んだフォルダの一つ上から始める（バッチごとのフォルダが並んでいるため）
+            conn = get_connection(db_path)
+            try:
+                set_setting(conn, LAST_IMAGE_DIR_KEY, str(Path(path).parent))
+            finally:
+                conn.close()
             count = len(list(Path(path).glob("*.jpg")))
             image_dir_text.value = f"{path}（画像 {count} 枚）"
             image_dir_text.italic = False
@@ -462,20 +539,18 @@ def build_import_view(
             status_text.value = "画像のフォルダを選択してください"
             page.update()
             return
-        try:
-            base_slot = int((base_slot_field.value or "").strip())
-        except ValueError:
-            status_text.value = "初期スロットを数字で入力してください"
+        base_slot_text = (base_slot_field.value or "").strip()
+        error = _validate_ocr_params(base_slot_text, minus_skills_field.value or "")
+        if error is None and not base_slot_text:
+            error = "初期スロットを数字で入力してください"
+        if error:
+            status_text.value = error
             page.update()
             return
         from app.ocr.kuijin_ocr import parse_minus_skills
 
-        try:
-            minus_skills = parse_minus_skills(minus_skills_field.value or "")
-        except ValueError:
-            status_text.value = "防具が元から持つスキルは「スキル名:元のLv」をカンマで区切って入力してください（例: 攻撃:2,火事場力:3）"
-            page.update()
-            return
+        base_slot = int(base_slot_text)
+        minus_skills = parse_minus_skills(minus_skills_field.value or "")
         if label_radio_group.value:
             save_ocr_params(label_radio_group.value)
         page.run_thread(
