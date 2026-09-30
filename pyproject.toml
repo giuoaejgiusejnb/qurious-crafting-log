@@ -4,11 +4,20 @@ version = "0.1.0"
 requires-python = ">=3.11"
 dependencies = [
     "flet>=0.24",
+    # 練成画像の読み取り（app/ocr、取込タブの「画像から取込」）
+    "numpy",
+    "opencv-python-headless",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0",
+]
+# 開発用。新しいスキル名の見本へのラベル付け（kuijin_ocr）と scripts/ocr の検算・確認用スクリプト。
+# torch を含み配布サイズが非常に大きくなるため、配布版（flet build）には入れない
+ocr-dev = [
+    "easyocr",
+    "pillow",
 ]
 
 [tool.pytest.ini_options]
@@ -34,4 +43,6 @@ exclude = [
     "sample_paste_24999.txt",
     "PROGRESS.md",
     "CLAUDE.md",
+    "docs",
+    "app/ocr/templates/review",
 ]
