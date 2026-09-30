@@ -43,3 +43,8 @@ exclude = [
     "CLAUDE.md",
     "docs",
 ]
+
+[tool.flet.compile]
+# 同梱するパッケージの .py を .pyc にしない。OpenCV（cv2）は読み込み時に config.py という
+# ソースファイルそのものを探すため、.pyc だけにすると「missing configuration file」で読み込めない
+packages = false
