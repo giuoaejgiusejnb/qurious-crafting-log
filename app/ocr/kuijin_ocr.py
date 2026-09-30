@@ -866,6 +866,79 @@ def list_images(inputs: list[str | Path]) -> list[str]:
     return paths
 
 
+# JPEG のマーカーのうち、画像の大きさを持つもの（SOF0〜SOF15。DHT・JPG・DAC を除く）
+_SOF_MARKERS = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
+
+
+def jpeg_size(path: str) -> tuple[int, int] | None:
+    """JPEG のヘッダーだけを読んで (幅, 高さ) を返す。JPEG として読めなければ None。
+
+    画像を展開しないので、全画像の解像度を読み取りの前に調べても時間がかからない。
+    """
+    try:
+        with open(path, "rb") as f:
+            if f.read(2) != b"\xff\xd8":
+                return None
+            while True:
+                b = f.read(1)
+                while b and b != b"\xff":   # マーカーの前の詰め物を飛ばす
+                    b = f.read(1)
+                while b == b"\xff":
+                    b = f.read(1)
+                if not b:
+                    return None
+                marker = b[0]
+                if marker in (0xD8, 0x01) or 0xD0 <= marker <= 0xD7:
+                    continue   # 長さを持たないマーカー
+                if marker in (0xD9, 0xDA):
+                    return None   # 画像の大きさより先に画像の終わり・本体が来た
+                seg = f.read(2)
+                if len(seg) < 2:
+                    return None
+                length = int.from_bytes(seg, "big")
+                if marker in _SOF_MARKERS:
+                    data = f.read(5)
+                    if len(data) < 5:
+                        return None
+                    return int.from_bytes(data[3:5], "big"), int.from_bytes(data[1:3], "big")
+                f.seek(length - 2, 1)
+    except OSError:
+        return None
+
+
+def supported_resolutions(template_dir: Path) -> set[str]:
+    """見本がある解像度（"1280x720" など）。スキル名の見本のファイル（{解像度}_name.json）で判断する。"""
+    return {p.name.split("_", 1)[0] for p in template_dir.glob("*_name.json")}
+
+
+class UnsupportedResolutionError(Exception):
+    """見本の無い解像度の画像が含まれている。取込は行わない。"""
+
+    def __init__(self, files: list[tuple[str, str]], supported: set[str]) -> None:
+        self.files = files            # [(画像のパス, 解像度), ...]
+        self.supported = supported
+        sizes = sorted({size for _, size in files})
+        super().__init__(
+            f"対応していない解像度（{'、'.join(sizes)}）の画像が {len(files)} 枚あります"
+            f"（対応: {'、'.join(sorted(supported)) or 'なし'}）。取込は行っていません"
+        )
+
+
+def check_resolutions(paths: list[str], template_dir: Path) -> None:
+    """見本の無い解像度の画像が 1 枚でもあれば UnsupportedResolutionError にする。
+
+    ヘッダーが読めない画像はここでは問題にしない（読み取りで「読込失敗」として数える）。
+    """
+    supported = supported_resolutions(template_dir)
+    bad = []
+    for path in paths:
+        size = jpeg_size(path)
+        if size is not None and f"{size[0]}x{size[1]}" not in supported:
+            bad.append((path, f"{size[0]}x{size[1]}"))
+    if bad:
+        raise UnsupportedResolutionError(bad, supported)
+
+
 @dataclass
 class OcrRun:
     report: Report
@@ -1093,6 +1166,8 @@ def start_reading(
     """
     if not list(signature_dir(template_dir).glob("*.png")):
         raise FileNotFoundError(f"画面判定用の見本がありません: {signature_dir(template_dir)}")
+    # 見本の無い解像度の画像は、読み取ると見本がすべて新しくなってしまうので、読み取りの前に止める
+    check_resolutions(paths, template_dir)
     start = time.perf_counter()
     try:
         extracted = _extract_all(paths, template_dir, jobs, use_processes, progress_callback)
@@ -1231,8 +1306,11 @@ def main() -> None:
     if not list(signature_dir(args.templates).glob("*.png")):
         sys.exit("画面判定用の見本がありません。先に --save-signature screen1 <結果画面の画像> を実行してください。")
 
-    run = read_images(list_images(args.inputs), args.base_slot, args.zenny_step, minus_skills,
-                      args.templates, args.jobs, table=args.table)
+    try:
+        run = read_images(list_images(args.inputs), args.base_slot, args.zenny_step, minus_skills,
+                          args.templates, args.jobs, table=args.table)
+    except UnsupportedResolutionError as exc:
+        sys.exit(f"{exc}\n" + "\n".join(f"  {size}: {path}" for path, size in exc.files))
 
     if args.detail:
         write_detail_csv(args.detail, run.records)

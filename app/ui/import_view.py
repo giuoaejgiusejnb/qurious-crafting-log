@@ -18,6 +18,8 @@ LAST_SELECTION_KEY = "import_label_last_selection"
 # 画像から取込（8bit）の設定を防具ごとに記憶する {防具名: {"base_slot", "zenny_step", "minus_skills", "table"}}
 OCR_PARAMS_KEY = "ocr_params_by_armor"
 LAST_IMAGE_DIR_KEY = "ocr_last_image_dir"
+# 対応していない解像度の画像があったとき、取込タブに並べるファイル名の最大数
+_MAX_LISTED_FILES = 50
 
 _PRESET_COLORS = [ft.Colors.RED_200, ft.Colors.BLUE_200, ft.Colors.GREEN_200]
 _CUSTOM_COLOR = ft.Colors.AMBER_100
@@ -369,6 +371,7 @@ def build_import_view(
         """画像の切り出しと見本との照合。確定していない見本があればラベル入力のダイアログを出す。"""
         # 画像読み取りの依存（numpy / OpenCV）は重いので、使うときだけ読み込む
         from app.ocr.image_import import NoImagesError, start_image_reading
+        from app.ocr.kuijin_ocr import UnsupportedResolutionError
 
         label = label_radio_group.value or None
         set_busy(True)
@@ -382,6 +385,16 @@ def build_import_view(
             )
         except NoImagesError as exc:
             status_text.value = str(exc)
+            set_busy(False)
+            return
+        except UnsupportedResolutionError as exc:
+            # 1 枚でもあれば取込は行わない（DB にも見本にも何も保存しない）。該当する画像をすべて示す
+            shown = exc.files[:_MAX_LISTED_FILES]
+            status_text.value = (
+                f"{exc}\n該当する画像をフォルダから除いてから、もう一度取り込んでください。\n"
+                + "\n".join(f"・{Path(path).name}（{size}）" for path, size in shown)
+                + (f"\n…ほか {len(exc.files) - len(shown)} 枚" if len(exc.files) > len(shown) else "")
+            )
             set_busy(False)
             return
         except Exception as exc:  # 読み取り中の想定外のエラーでも画面を固めない
