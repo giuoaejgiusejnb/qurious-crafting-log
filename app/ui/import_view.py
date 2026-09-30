@@ -113,6 +113,7 @@ def build_import_view(
         if label_radio_group.value == name:
             label_radio_group.value = DEFAULT_EQUIPMENT_OPTIONS[0]
             persist_last_selection(label_radio_group.value)
+            load_ocr_params(label_radio_group.value)   # 取込の設定欄も切り替えた防具のものにする
 
         refresh_options_layout()
         page.update()
