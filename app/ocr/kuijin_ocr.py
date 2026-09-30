@@ -41,7 +41,7 @@ import json
 import os
 import sys
 import time
-from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -876,8 +876,11 @@ def check_sequence(rows: list, step_k: int) -> list[str]:
 
 # ---------------------------------------------------------------- 実行
 
-ProgressCallback = Callable[[int, int], None]
-EXTRACT_CHUNK = 64
+# 進捗を (段階, 済み, 全体) で渡す。段階は "extract"（画像の切り出し）と "match"（見本との照合）
+ProgressCallback = Callable[[str, int, int], None]
+MATCH_PROGRESS_STEP = 200   # 見本との照合の進捗を知らせる間隔（枚）
+EXTRACT_CHUNK = 64          # 別プロセスで切り出すときの 1 まとまりの枚数
+THREAD_EXTRACT_CHUNK = 8    # スレッドで切り出すとき（exe）の 1 まとまりの枚数
 
 
 def user_template_dir(data_dir: Path, bundled: Path = BUNDLED_TEMPLATE_DIR) -> Path:
@@ -1177,20 +1180,27 @@ class OcrSession:
 
 def _extract_all(paths: list[str], template_dir: Path, jobs: int | None, use_processes: bool,
                  progress_callback: ProgressCallback | None) -> list[dict | None]:
-    batches = [paths[i:i + EXTRACT_CHUNK] for i in range(0, len(paths), EXTRACT_CHUNK)]
+    # スレッドは本数が多く、同じ大きさのまとまりがほぼ同時に終わって進捗がまとめて進むので、小さく分ける
+    chunk = EXTRACT_CHUNK if use_processes else THREAD_EXTRACT_CHUNK
+    batches = [paths[i:i + chunk] for i in range(0, len(paths), chunk)]
     pool: Executor
     if use_processes:
         pool = ProcessPoolExecutor(jobs, initializer=_init_worker, initargs=(template_dir,))
     else:
         _init_worker(template_dir)
         pool = ThreadPoolExecutor(jobs)
-    extracted: list[dict | None] = []
+    # 終わったまとまりから順番に関係なく数えて進捗を知らせ、結果は元の順番に並べ直す
+    # （順番どおりに待つと、先のまとまりが遅いときに進捗が止まって見える）
+    results: list[list[dict | None]] = [[] for _ in batches]
+    done = 0
     with pool:
-        for batch in pool.map(extract_batch, batches):
-            extracted += batch
+        futures = {pool.submit(extract_batch, batch): i for i, batch in enumerate(batches)}
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+            done += len(batches[futures[future]])
             if progress_callback:
-                progress_callback(len(extracted), len(paths))
-    return extracted
+                progress_callback("extract", done, len(paths))
+    return [ex for batch in results for ex in batch]
 
 
 def start_reading(
@@ -1207,7 +1217,7 @@ def start_reading(
     """画像を切り出して見本と照合する（結果はまだ作らない）。
 
     use_processes=False ではスレッドで切り出す（exe 化したアプリではプロセスを起こせないことがあるため）。
-    progress_callback には (切り出しが済んだ枚数, 全枚数) を渡す。
+    progress_callback には (段階, 済んだ枚数, 全枚数) を渡す（段階は "extract" と "match"）。
     """
     if not list(signature_dir(template_dir).glob("*.png")):
         raise FileNotFoundError(f"画面判定用の見本がありません: {signature_dir(template_dir)}")
@@ -1222,7 +1232,9 @@ def start_reading(
     t_extract = time.perf_counter() - start
 
     session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir, table)
-    for path, ex in zip(paths, extracted):
+    for n, (path, ex) in enumerate(zip(paths, extracted), start=1):
+        if progress_callback and (n % MATCH_PROGRESS_STEP == 0 or n == len(paths)):
+            progress_callback("match", n, len(paths))
         if ex is None or ex["screen"] is None:
             session.results.append(None)
             continue

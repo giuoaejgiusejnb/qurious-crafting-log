@@ -15,7 +15,8 @@ from typing import Callable
 from app.core.importer import SOURCE_8BIT, ImportSummary, import_block
 from app.ocr.kuijin_ocr import OcrRun, OcrSession, finish_reading, list_images, start_reading, user_template_dir
 
-# 画像読み取り（phase="ocr"）と DB 保存（phase="import"）の進捗を (phase, 済み, 全体) で渡す
+# 進捗を (段階, 済み, 全体) で渡す。段階は "extract"（画像の切り出し）・"match"（見本との照合）・
+# "report"（結果の作成。済み・全体は 0）・"import"（DB への保存）
 PhaseProgressCallback = Callable[[str, int, int], None]
 
 
@@ -63,7 +64,7 @@ def start_image_reading(
         minus_skills,
         template_dir=user_template_dir(data_dir),
         use_processes=can_use_processes(),
-        progress_callback=(lambda d, t: progress_callback("ocr", d, t)) if progress_callback else None,
+        progress_callback=progress_callback,
         table=table,
     )
 
@@ -83,6 +84,8 @@ def finish_image_import(
     """
     if labels:
         session.apply_labels(labels)
+    if progress_callback:
+        progress_callback("report", 0, 0)
     run = finish_reading(session)
     summary = import_block(
         conn,

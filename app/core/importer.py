@@ -9,6 +9,7 @@ from app.core.skill_mask import compute_mask
 from app.core.skill_registry import SkillRegistry
 
 ProgressCallback = Callable[[int, int], None]
+_PROGRESS_STEP = 100  # 進捗を知らせる間隔（件）
 
 SOURCE_NX = "nx"  # NX Macro Controllerが出力したresult_logのテキスト
 SOURCE_8BIT = "8bit"  # 練成画像を読み取って作ったresult_log（app/ocr）
@@ -235,7 +236,7 @@ def import_block(
                 [(result_id, sid, s.value) for sid, s in zip(skill_ids, result.skills)],
             )
 
-        if progress_callback and (i % 500 == 0 or i == total):
+        if progress_callback and (i % _PROGRESS_STEP == 0 or i == total):
             progress_callback(i, total)
 
     conn.commit()

@@ -1,4 +1,5 @@
 import json
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable
 
@@ -20,6 +21,8 @@ OCR_PARAMS_KEY = "ocr_params_by_armor"
 LAST_IMAGE_DIR_KEY = "ocr_last_image_dir"
 # 対応していない解像度の画像があったとき、取込タブに並べるファイル名の最大数
 _MAX_LISTED_FILES = 50
+# 画像取込の進捗の表示を書き換える最短の間隔（秒）
+_PROGRESS_INTERVAL = 0.1
 
 _PRESET_COLORS = [ft.Colors.RED_200, ft.Colors.BLUE_200, ft.Colors.GREEN_200]
 _CUSTOM_COLOR = ft.Colors.AMBER_100
@@ -434,12 +437,23 @@ def build_import_view(
             image_dir_text.italic = False
             page.update()
 
+    last_progress_update = [0.0]
+
     def image_progress(phase: str, done: int, total: int) -> None:
-        progress_bar.value = done / total if total else 1
-        if phase == "ocr":
-            status_text.value = f"画像を読み取り中... {done}/{total}枚"
-        else:
-            status_text.value = f"取込中... {done}/{total}"
+        # 画面の書き換えは 0.1 秒に 1 回まで（段階が変わったときと最後は必ず書き換える）
+        now = time.monotonic()
+        text = {
+            "extract": f"画像を読み取り中... {done}/{total}枚",
+            "match": f"見本と照合中... {done}/{total}枚",
+            "report": "読み取り結果を作成中...",
+            "import": f"取込中... {done}/{total}件",
+        }[phase]
+        phase_changed = not (status_text.value or "").startswith(text.split("...")[0])
+        if not phase_changed and done != total and now - last_progress_update[0] < _PROGRESS_INTERVAL:
+            return
+        last_progress_update[0] = now
+        progress_bar.value = done / total if total else None   # None は進み具合の分からない表示
+        status_text.value = text
         page.update()
 
     def do_image_import(
