@@ -5,8 +5,11 @@ from app.core.skill_master import (
     HIDDEN_MINUS_SKILL_NAME,
     HIDDEN_SOME_MINUS_SKILL_NAME,
     MARKER_SKILL_NAMES,
+    SKILL_MASTER,
     UNKNOWN_SKILL_NAME,
 )
+
+SKILL_COST: dict[str, int] = {name: cost for cost, names in SKILL_MASTER for name in names}
 
 # 画像読み取り（8bit）の結果画面２で、写っていない4つ目以降のスキルの印の表示と説明
 _MARKER_TEXTS = {
@@ -28,6 +31,23 @@ _MARKER_TEXTS = {
 _MINUS_MARKERS = {HIDDEN_MINUS_SKILL_NAME, HIDDEN_SOME_MINUS_SKILL_NAME}
 
 _SKILLS_COLUMN_WIDTH = 240
+
+# スキルの一覧（skill_master）での位置。同じコストのスキルの並び順に使う
+_MASTER_POSITION = {name: i for i, name in enumerate(n for _, names in SKILL_MASTER for n in names)}
+
+
+def _display_order(skill: tuple[str, int]) -> tuple:
+    """ゲームの結果画面と同じ「プラスをコストの高い順 → マイナス → 印」の並びにするための順位。
+
+    同じコストどうしの順番はゲームではランダムなので、スキル一覧の並び順にして毎回同じにする。
+    画像読み取り（8bit）の印（写っていない4つ目以降のスキル）は値が無いので、最後に出す。
+    skill_master に無いスキル（NX の表記ゆれなど）は、同じ符号の中で最後に名前順で並べる。
+    """
+    name, value = skill
+    if name in MARKER_SKILL_NAMES:
+        return (2, 0, 0, name)
+    cost = SKILL_COST.get(name, 0)
+    return (0 if value > 0 else 1, -cost, _MASTER_POSITION.get(name, len(_MASTER_POSITION)), name)
 
 
 def build_skills_wrap(
@@ -53,8 +73,7 @@ def build_skills_wrap(
     resolved_positive = resolve_color(positive_color)
     resolved_negative = resolve_color(negative_color)
 
-    # 画像読み取り（8bit）の印（写っていない4つ目以降のスキル）は値が無いので、最後に出す
-    skills = sorted(skills, key=lambda s: s[0] in MARKER_SKILL_NAMES)
+    skills = sorted(skills, key=_display_order)
 
     controls: list[ft.Control] = []
     for i, (name, value) in enumerate(skills):
