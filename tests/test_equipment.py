@@ -53,3 +53,16 @@ def test_resolve_ocr_params_prefers_saved_and_fills_missing_keys():
     assert params["table"] == "5"
     assert resolve_ocr_params({}, "クシャ胴")["zenny_step"] == "6000"
     assert resolve_ocr_params({}, "自作の防具") == {"base_slot": "", "zenny_step": "4000", "minus_skills": "", "table": ""}
+
+
+def test_resolve_ocr_params_fills_blank_saved_values():
+    """初期値を用意する前に空欄のまま保存された設定は、初期値で補う。「なし」は "none" なので補わない。"""
+    from app.core.equipment import TABLE_NONE, resolve_ocr_params
+
+    saved = {"ギルパレ脚": {"base_slot": "3", "zenny_step": "4000", "minus_skills": "", "table": ""}}
+    params = resolve_ocr_params(saved, "ギルパレ脚")
+    assert params["minus_skills"] == "火事場力:2,災禍転福:2"
+    assert params["table"] == "6"
+
+    saved = {"ギルパレ脚": {"base_slot": "3", "zenny_step": "4000", "minus_skills": "", "table": TABLE_NONE}}
+    assert resolve_ocr_params(saved, "ギルパレ脚")["table"] == TABLE_NONE

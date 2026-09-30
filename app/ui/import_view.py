@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Callable
 import flet as ft
 
 from app.core.armor_defaults import reset_armor_defaults
-from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS, resolve_ocr_params
+from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS, TABLE_NONE, resolve_ocr_params
 from app.core.importer import ImportSummary, import_block
 from app.core.settings import get_json_setting, get_setting, set_json_setting, set_setting
 from app.db.connection import get_connection
@@ -34,7 +34,7 @@ def _table_options() -> list[ft.DropdownOption]:
     return [
         ft.DropdownOption(key="5", text="5"),
         ft.DropdownOption(key="6", text="6"),
-        ft.DropdownOption(key="none", text="なし（不明）"),
+        ft.DropdownOption(key=TABLE_NONE, text="なし（不明）"),
     ]
 
 
@@ -173,7 +173,7 @@ def build_import_view(
     # 画像から取込（8bit）の設定。空欄でもよく、後から取込タブで入力できる
     new_base_slot_field = ft.TextField(label="初期スロット", width=120, keyboard_type=ft.KeyboardType.NUMBER)
     new_zenny_step_dropdown = ft.Dropdown(label="1回のゼニー", width=140, options=_zenny_step_options(), value="4000")
-    new_table_dropdown = ft.Dropdown(label="抽選テーブル", width=150, options=_table_options(), value="none")
+    new_table_dropdown = ft.Dropdown(label="抽選テーブル", width=150, options=_table_options(), value=TABLE_NONE)
     new_minus_skills_field = ft.TextField(label="防具が元から持つスキル", hint_text="攻撃:2,火事場力:3", width=320)
     add_error_text = ft.Text("", color=ft.Colors.RED_700)
 
@@ -199,7 +199,7 @@ def build_import_view(
                 "base_slot": base_slot,
                 "zenny_step": new_zenny_step_dropdown.value or "4000",
                 "minus_skills": minus_skills,
-                "table": "" if new_table_dropdown.value in (None, "none") else new_table_dropdown.value,
+                "table": new_table_dropdown.value or TABLE_NONE,
             },
         )
         if name not in all_options:
@@ -242,7 +242,7 @@ def build_import_view(
         new_option_field.value = ""
         new_base_slot_field.value = ""
         new_zenny_step_dropdown.value = "4000"
-        new_table_dropdown.value = "none"
+        new_table_dropdown.value = TABLE_NONE
         new_minus_skills_field.value = ""
         add_error_text.value = ""
         page.show_dialog(add_dialog)
@@ -293,7 +293,7 @@ def build_import_view(
         base_slot_field.value = params["base_slot"]
         zenny_step_dropdown.value = params["zenny_step"]
         minus_skills_field.value = params["minus_skills"]
-        table_dropdown.value = params["table"] or "none"
+        table_dropdown.value = params["table"] or TABLE_NONE
 
     def store_ocr_params(label: str, params: dict[str, str] | None) -> None:
         """防具の取込設定を保存する。params が None ならその防具の設定を消す。"""
@@ -316,7 +316,7 @@ def build_import_view(
                 "base_slot": (base_slot_field.value or "").strip(),
                 "zenny_step": zenny_step_dropdown.value or "4000",
                 "minus_skills": (minus_skills_field.value or "").strip(),
-                "table": "" if table_dropdown.value in (None, "none") else table_dropdown.value,
+                "table": table_dropdown.value or TABLE_NONE,
             },
         )
 
@@ -559,7 +559,7 @@ def build_import_view(
             base_slot,
             int(zenny_step_dropdown.value or "4000"),
             minus_skills,
-            None if table_dropdown.value in (None, "none") else int(table_dropdown.value),
+            None if table_dropdown.value in (None, TABLE_NONE) else int(table_dropdown.value),
         )
 
     select_dir_button = ft.Button(content="フォルダを選択", icon=ft.Icons.FOLDER_OPEN)
