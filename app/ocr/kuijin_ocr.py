@@ -876,11 +876,15 @@ def check_sequence(rows: list, step_k: int) -> list[str]:
 
 # ---------------------------------------------------------------- 実行
 
-# 進捗を (段階, 済み, 全体) で渡す。段階は "extract"（画像の切り出し）と "match"（見本との照合）
+# 進捗を (段階, 済み, 全体) で渡す。段階は "check"（解像度の確認）・"extract"（画像の切り出し）・"match"（見本との照合）
 ProgressCallback = Callable[[str, int, int], None]
-MATCH_PROGRESS_STEP = 200   # 見本との照合の進捗を知らせる間隔（枚）
-EXTRACT_CHUNK = 64          # 別プロセスで切り出すときの 1 まとまりの枚数
-THREAD_EXTRACT_CHUNK = 8    # スレッドで切り出すとき（exe）の 1 まとまりの枚数
+MATCH_PROGRESS_STEP = 50    # 見本との照合の進捗を知らせる間隔（枚）
+CHECK_THREADS = 16          # 解像度の確認で並列に開くファイルの数
+CHECK_PROGRESS_STEP = 200   # 解像度の確認の進捗を知らせる間隔（枚）
+# 切り出しの 1 まとまりの枚数。プロセス・スレッドとも本数が多く、同じ大きさのまとまりがほぼ同時に終わって
+# 進捗がまとめて進むので、小さく分ける（プロセスで 64 枚ずつだと USB から 9,742 枚で数秒おきにしか進まなかった。
+# 8 枚にしても全体の時間は変わらない: 5,974 枚で 6.2 秒 → 5.7 秒）
+EXTRACT_CHUNK = 8
 
 
 def user_template_dir(data_dir: Path, bundled: Path = BUNDLED_TEMPLATE_DIR) -> Path:
@@ -972,17 +976,22 @@ class UnsupportedResolutionError(Exception):
         )
 
 
-def check_resolutions(paths: list[str], template_dir: Path) -> None:
+def check_resolutions(paths: list[str], template_dir: Path,
+                      progress_callback: ProgressCallback | None = None) -> None:
     """見本の無い解像度の画像が 1 枚でもあれば UnsupportedResolutionError にする。
 
     ヘッダーが読めない画像はここでは問題にしない（読み取りで「読込失敗」として数える）。
+    USB メモリなどではファイルを開くたびに待たされる（1 枚約 26ms、1 万枚で約 4 分）ので、スレッドで並列に開く
+    （約 2ms）。
     """
     supported = supported_resolutions(template_dir)
     bad = []
-    for path in paths:
-        size = jpeg_size(path)
-        if size is not None and f"{size[0]}x{size[1]}" not in supported:
-            bad.append((path, f"{size[0]}x{size[1]}"))
+    with ThreadPoolExecutor(CHECK_THREADS) as pool:
+        for n, (path, size) in enumerate(zip(paths, pool.map(jpeg_size, paths)), start=1):
+            if size is not None and f"{size[0]}x{size[1]}" not in supported:
+                bad.append((path, f"{size[0]}x{size[1]}"))
+            if progress_callback and (n % CHECK_PROGRESS_STEP == 0 or n == len(paths)):
+                progress_callback("check", n, len(paths))
     if bad:
         raise UnsupportedResolutionError(bad, supported)
 
@@ -1180,9 +1189,7 @@ class OcrSession:
 
 def _extract_all(paths: list[str], template_dir: Path, jobs: int | None, use_processes: bool,
                  progress_callback: ProgressCallback | None) -> list[dict | None]:
-    # スレッドは本数が多く、同じ大きさのまとまりがほぼ同時に終わって進捗がまとめて進むので、小さく分ける
-    chunk = EXTRACT_CHUNK if use_processes else THREAD_EXTRACT_CHUNK
-    batches = [paths[i:i + chunk] for i in range(0, len(paths), chunk)]
+    batches = [paths[i:i + EXTRACT_CHUNK] for i in range(0, len(paths), EXTRACT_CHUNK)]
     pool: Executor
     if use_processes:
         pool = ProcessPoolExecutor(jobs, initializer=_init_worker, initargs=(template_dir,))
@@ -1217,19 +1224,20 @@ def start_reading(
     """画像を切り出して見本と照合する（結果はまだ作らない）。
 
     use_processes=False ではスレッドで切り出す（exe 化したアプリではプロセスを起こせないことがあるため）。
-    progress_callback には (段階, 済んだ枚数, 全枚数) を渡す（段階は "extract" と "match"）。
+    progress_callback には (段階, 済んだ枚数, 全枚数) を渡す（段階は "check"・"extract"・"match"）。
     """
     if not list(signature_dir(template_dir).glob("*.png")):
         raise FileNotFoundError(f"画面判定用の見本がありません: {signature_dir(template_dir)}")
     # 見本の無い解像度の画像は、読み取ると見本がすべて新しくなってしまうので、読み取りの前に止める
-    check_resolutions(paths, template_dir)
     start = time.perf_counter()
+    check_resolutions(paths, template_dir, progress_callback)
+    t_check = time.perf_counter() - start
     try:
         extracted = _extract_all(paths, template_dir, jobs, use_processes, progress_callback)
     except BrokenProcessPool:
         # 子プロセスを起こせない環境（__main__ を読み直せない起動のしかたなど）ではスレッドでやり直す
         extracted = _extract_all(paths, template_dir, jobs, False, progress_callback)
-    t_extract = time.perf_counter() - start
+    t_extract = time.perf_counter() - start - t_check
 
     session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir, table)
     for n, (path, ex) in enumerate(zip(paths, extracted), start=1):
@@ -1251,10 +1259,10 @@ def start_reading(
                              if g.tobytes() not in mb.cache
                              else mb.cache[g.tobytes()] for g in ex["money"]])
         session.results.append(ids)
-    t_match = time.perf_counter() - start - t_extract
+    t_match = time.perf_counter() - start - t_check - t_extract
 
     session.build_values()   # 新しい形の文字をここで見つけておく（pending_labels に出すため）
-    session.timings = {"extract": t_extract, "match": t_match, "start": start}
+    session.timings = {"check": t_check, "extract": t_extract, "match": t_match, "start": start}
     return session
 
 
@@ -1291,7 +1299,8 @@ def finish_reading(session: OcrSession) -> OcrRun:
     report = build_report(records, session.zenny_step // 1000, session.template_dir, session.minus_skills,
                           session.table)
     t = session.timings
-    timings = {"extract": t["extract"], "match": t["match"], "total": time.perf_counter() - t["start"]}
+    timings = {"check": t["check"], "extract": t["extract"], "match": t["match"],
+               "total": time.perf_counter() - t["start"]}
     return OcrRun(report, records, session.paths, session.results, session.screen_of,
                   list(session.banks.values()), session.template_dir, timings)
 
@@ -1384,7 +1393,7 @@ def main() -> None:
     print(
         f"\n{len(run.paths)} 枚 / 画面別 {run.screen_counts} / 結果画面以外 {run.not_result_count}"
         f" / 読込失敗 {run.read_error_count} / 新規テンプレート {run.new_template_count}\n"
-        f"切り出し {t['extract']:.1f}s, 照合 {t['match']:.1f}s, "
+        f"解像度の確認 {t['check']:.1f}s, 切り出し {t['extract']:.1f}s, 照合 {t['match']:.1f}s, "
         f"合計 {t['total']:.1f}s -> {args.output}",
         file=sys.stderr,
     )

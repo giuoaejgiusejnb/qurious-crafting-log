@@ -1,3 +1,4 @@
+import asyncio
 import os
 import shutil
 from pathlib import Path
@@ -52,7 +53,32 @@ def _migrate_legacy_db_if_needed() -> None:
             shutil.copy2(legacy_file, DB_PATH.with_name(DB_PATH.name + suffix))
 
 
+def make_send_thread_safe(page: ft.Page) -> None:
+    """別スレッド（page.run_thread）からの画面の更新を、すぐ画面に届くようにする。
+
+    Flet 0.86 は送信するデータを asyncio.Queue に入れるが、別スレッドから入れてもイベントループが起きないので、
+    ループがほかの理由で動くまで（クリックなど）画面が変わらない（画像取込の進み具合がずっと出なかった）。
+    別スレッドからの送信は、イベントループに渡して送らせる（順番は保たれる）。
+    """
+    connection = page.session.connection
+    loop = connection.loop
+    send_message = connection.send_message
+
+    def send_message_from_any_thread(message):
+        try:
+            on_loop = asyncio.get_running_loop() is loop
+        except RuntimeError:   # イベントループの無いスレッド
+            on_loop = False
+        if on_loop:
+            send_message(message)
+        else:
+            loop.call_soon_threadsafe(send_message, message)
+
+    connection.send_message = send_message_from_any_thread
+
+
 def main(page: ft.Page) -> None:
+    make_send_thread_safe(page)
     page.title = "モンハン錬成結果 記録・検索"
     # OS側がダークモードだと配色が見づらくなるため、常にライトモードで固定表示する
     page.theme_mode = ft.ThemeMode.LIGHT

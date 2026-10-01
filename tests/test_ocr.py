@@ -131,6 +131,26 @@ def test_unsupported_resolution_stops_before_reading(tmp_path):
     assert sorted(p.name for p in templates.iterdir()) == before
 
 
+def test_check_resolutions_reports_progress_in_order(tmp_path, monkeypatch):
+    """解像度の確認は並列に開くが、該当する画像は元の順番で返し、最後の 1 枚で必ず進捗を知らせる。"""
+    from app.ocr import kuijin_ocr
+    from app.ocr.kuijin_ocr import UnsupportedResolutionError, check_resolutions
+
+    monkeypatch.setattr(kuijin_ocr, "CHECK_PROGRESS_STEP", 2)
+    images = tmp_path / "images"
+    images.mkdir()
+    sizes = [(1920, 1080), (1280, 720), (1280, 720), (640, 360), (1280, 720)]
+    for i, (w, h) in enumerate(sizes):
+        _write_jpeg(images / f"{i}.jpg", w, h)
+    paths = [str(images / f"{i}.jpg") for i in range(len(sizes))]
+    calls = []
+
+    with pytest.raises(UnsupportedResolutionError) as exc_info:
+        check_resolutions(paths, user_template_dir(tmp_path / "data"), lambda *a: calls.append(a))
+    assert [(Path(p).name, size) for p, size in exc_info.value.files] == [("0.jpg", "1920x1080"), ("3.jpg", "640x360")]
+    assert calls == [("check", 2, 5), ("check", 4, 5), ("check", 5, 5)]
+
+
 def test_build_report_marks_hidden_minus(tmp_path):
     """結果画面２で写っていないスキルがすべてマイナスと確定したら、印「何らかのマイナススキル」を付け、マイナスを「有」にする。"""
     values = _values("100", "逆恨み", "+1")

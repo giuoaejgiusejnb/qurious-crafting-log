@@ -443,6 +443,7 @@ def build_import_view(
         # 画面の書き換えは 0.1 秒に 1 回まで（段階が変わったときと最後は必ず書き換える）
         now = time.monotonic()
         text = {
+            "check": f"画像の解像度を確認中... {done}/{total}枚",
             "extract": f"画像を読み取り中... {done}/{total}枚",
             "match": f"見本と照合中... {done}/{total}枚",
             "report": "読み取り結果を作成中...",
@@ -463,17 +464,21 @@ def build_import_view(
         minus_skills: dict[str, int] | None,
         table: int | None,
     ) -> None:
-        """画像の切り出しと見本との照合。確定していない見本があればラベル入力のダイアログを出す。"""
-        # 画像読み取りの依存（numpy / OpenCV）は重いので、使うときだけ読み込む
-        from app.ocr.image_import import NoImagesError, start_image_reading
-        from app.ocr.kuijin_ocr import UnsupportedResolutionError
+        """画像の切り出しと見本との照合。確定していない見本があればラベル入力のダイアログを出す。
+
+        ボタンを押せなくする・「開始しました」の表示は、呼び出し元（on_image_import_click）で済ませておく。
+        """
+        try:
+            # 画像読み取りの依存（numpy / OpenCV）は重いので、使うときだけ読み込む
+            # （初回は数秒かかることがあり、その間に表示が変わらないと二度押されてしまう）
+            from app.ocr.image_import import NoImagesError, start_image_reading
+            from app.ocr.kuijin_ocr import UnsupportedResolutionError
+        except Exception as exc:
+            status_text.value = f"画像の読み取りに失敗しました: {exc}"
+            set_busy(False)
+            raise
 
         label = label_radio_group.value or None
-        set_busy(True)
-        progress_bar.value = 0
-        status_text.value = "画像の読み取りを開始しました..."
-        page.update()
-
         try:
             session = start_image_reading(
                 Path(image_dir), db_path.parent, base_slot, zenny_step, minus_skills, image_progress, table
@@ -536,7 +541,7 @@ def build_import_view(
             f"\n画像 {result.image_count}枚 / 結果画面 {sum(run.screen_counts.values())}枚"
             f"（うちスキルが4つ以上で4つ目以降が写っていないもの {run.screen_counts.get('screen2', 0)}枚）"
             f" / 結果画面以外 {run.not_result_count}枚 / 読込失敗 {run.read_error_count}枚"
-            f" / 読み取り {run.timings['total']:.0f}秒"
+            f" / 読み取り {run.timings['total']:.0f}秒（うち解像度の確認 {run.timings['check']:.1f}秒）"
         )
         if labels:
             status_text.value += f"\n新しい見本 {len(labels)}個 にラベルを付けました。"
@@ -567,6 +572,10 @@ def build_import_view(
         minus_skills = parse_minus_skills(minus_skills_field.value or "")
         if label_radio_group.value:
             save_ocr_params(label_radio_group.value)
+        # 別スレッドに渡す前に、押したことを画面に出してボタンを押せなくする（二度押しで二回実行されないように）
+        progress_bar.value = None   # 解像度の確認が始まるまでは、進み具合の分からない表示
+        status_text.value = "画像の読み取りを開始しました..."
+        set_busy(True)
         page.run_thread(
             do_image_import,
             image_dir,
