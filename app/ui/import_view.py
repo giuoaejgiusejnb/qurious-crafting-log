@@ -541,7 +541,7 @@ def build_import_view(
             f"\n画像 {result.image_count}枚 / 結果画面 {sum(run.screen_counts.values())}枚"
             f"（うちスキルが4つ以上で4つ目以降が写っていないもの {run.screen_counts.get('screen2', 0)}枚）"
             f" / 結果画面以外 {run.not_result_count}枚 / 読込失敗 {run.read_error_count}枚"
-            f" / 読み取り {run.timings['total']:.0f}秒（うち解像度の確認 {run.timings['check']:.1f}秒）"
+            f" / 読み取り {run.timings['total']:.0f}秒"
         )
         if labels:
             status_text.value += f"\n新しい見本 {len(labels)}個 にラベルを付けました。"
