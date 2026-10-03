@@ -15,7 +15,7 @@ from typing import Callable
 from app.core.importer import SOURCE_8BIT, ImportSummary, import_block
 from app.ocr.kuijin_ocr import OcrRun, OcrSession, finish_reading, list_images, start_reading, user_template_dir
 
-# 進捗を (段階, 済み, 全体) で渡す。段階は "check"（解像度の確認）・"extract"（画像の切り出し）・"match"（見本との照合）・
+# 進捗を (段階, 済み, 全体) で渡す。段階は "extract"（画像の切り出し）・"match"（見本との照合）・
 # "report"（結果の作成。済み・全体は 0）・"import"（DB への保存）
 PhaseProgressCallback = Callable[[str, int, int], None]
 

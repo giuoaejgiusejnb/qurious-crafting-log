@@ -443,7 +443,6 @@ def build_import_view(
         # 画面の書き換えは 0.1 秒に 1 回まで（段階が変わったときと最後は必ず書き換える）
         now = time.monotonic()
         text = {
-            "check": f"画像の解像度を確認中... {done}/{total}枚",
             "extract": f"画像を読み取り中... {done}/{total}枚",
             "match": f"見本と照合中... {done}/{total}枚",
             "report": "読み取り結果を作成中...",
@@ -573,7 +572,7 @@ def build_import_view(
         if label_radio_group.value:
             save_ocr_params(label_radio_group.value)
         # 別スレッドに渡す前に、押したことを画面に出してボタンを押せなくする（二度押しで二回実行されないように）
-        progress_bar.value = None   # 解像度の確認が始まるまでは、進み具合の分からない表示
+        progress_bar.value = None   # 切り出しが始まるまでは、進み具合の分からない表示
         status_text.value = "画像の読み取りを開始しました..."
         set_busy(True)
         page.run_thread(
