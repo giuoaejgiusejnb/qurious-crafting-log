@@ -40,6 +40,12 @@ _DATE_RANGE_MODE = "date_range"
 _SCROLL_ANCHOR_KEY = ft.ScrollKey("search_view_scroll_anchor")
 
 
+def _short_datetime(imported_at: str) -> str:
+    """取込日時（"2026-10-01T08:25:07"）を、検索結果の狭い列に収まる "10-01 08:25" にする。"""
+    date, _, time = imported_at.partition("T")
+    return f"{date[5:]} {time[:5]}" if time else imported_at
+
+
 def _load_label_options(db_path: Path) -> list[str]:
     conn = get_connection(db_path)
     try:
@@ -486,8 +492,8 @@ def build_search_view(
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
                 ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
-                ft.Text("バッチ", width=60, weight=ft.FontWeight.BOLD),
-                ft.Text("取込日時", width=160, weight=ft.FontWeight.BOLD),
+                ft.Text("バッチ・防具", width=130, weight=ft.FontWeight.BOLD),
+                ft.Text("取込日時", width=90, weight=ft.FontWeight.BOLD),
                 ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
             ]
         )
@@ -515,8 +521,10 @@ def build_search_view(
                             ),
                             ft.Text(str(row.slot_add), width=60),
                             ft.Text(str(row.print_resistance), width=60),
-                            ft.Text(str(row.batch_id), width=60),
-                            ft.Text(row.imported_at, width=160),
+                            # 回収確認パネルが開いていても「回収」まで収まるよう、バッチと防具は 1 列に
+                            # まとめ、取込日時は月日と時分だけにする（正確な日時は履歴タブで見られる）
+                            ft.Text(f"#{row.batch_id} {row.label or ''}".strip(), width=130),
+                            ft.Text(_short_datetime(row.imported_at), width=90, tooltip=row.imported_at),
                             make_collected_checkbox(
                                 row.id, row.batch_id, bool(row.collected)
                             ),
