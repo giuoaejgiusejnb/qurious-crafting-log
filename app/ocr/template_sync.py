@@ -5,14 +5,15 @@
 そのため、見本の各ファイル（{解像度}_{種類}.npz/.json）は「複製したときの同梱の見本」の後ろに
 「ユーザーが付けた見本」が並んだ形になっている。
 
-アプリの更新で同梱の見本が増えていたら、次のように組み直す:
+アプリの更新で同梱の見本が変わっていたら（増えた・減った・ラベルを直した）、次のように組み直す:
   1. 新しい同梱の見本をすべて入れる（開発側でラベルを直した場合も、それが反映される）
   2. ユーザーが付けた見本のうち、同梱の見本と同じもの（照合で一致するもの）以外を後ろに足す
-複製したときの同梱の見本の数は bundled_manifest.json に記録しておく。
+複製したときの同梱の見本の数と内容の要約（fingerprints）は bundled_manifest.json に記録しておく。
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 from pathlib import Path
@@ -55,9 +56,21 @@ def _bundled_stems(bundled: Path) -> list[str]:
     return sorted(p.stem for p in bundled.glob("*.json") if (bundled / f"{p.stem}.npz").exists())
 
 
+FINGERPRINTS_KEY = "fingerprints"   # manifest の中の、同梱の見本の内容の要約（{ファイル名: 要約}）
+
+
+def _fingerprint(bits: np.ndarray, labels: list) -> str:
+    """見本の内容（形とラベル）の要約。同梱の見本が前回の複製から変わったかを調べるのに使う。"""
+    digest = hashlib.sha256(np.packbits(bits).tobytes())
+    digest.update(json.dumps([list(bits.shape), labels], ensure_ascii=False).encode("utf-8"))
+    return digest.hexdigest()
+
+
 def _write_manifest(user: Path, bundled: Path) -> None:
-    counts = {stem: len(_load_bank(bundled, stem)[1]) for stem in _bundled_stems(bundled)}
-    (user / MANIFEST_FILE).write_text(json.dumps(counts, ensure_ascii=False, indent=1), encoding="utf-8")
+    banks = {stem: _load_bank(bundled, stem) for stem in _bundled_stems(bundled)}
+    manifest: dict = {stem: len(labels) for stem, (_, labels) in banks.items()}
+    manifest[FINGERPRINTS_KEY] = {stem: _fingerprint(bits, labels) for stem, (bits, labels) in banks.items()}
+    (user / MANIFEST_FILE).write_text(json.dumps(manifest, ensure_ascii=False, indent=1), encoding="utf-8")
 
 
 def _common_prefix(a: np.ndarray, b: np.ndarray) -> int:
@@ -89,8 +102,17 @@ def sync_templates(user: Path, bundled: Path) -> list[str]:
         user_bits, user_labels = _load_bank(user, stem)
         # 複製したときの同梱の見本の数。記録が無ければ（この仕組みより前の複製）、先頭から同じ見本の数とみなす
         old_count = manifest.get(stem, _common_prefix(user_bits, new_bits))
-        if len(new_labels) <= old_count:
-            continue   # 同梱の見本は増えていない
+        # 同梱の見本が、前回複製したときから変わっていなければ何もしない（数だけで比べると、開発側で
+        # 見本を外した・ラベルだけ直した場合に反映されない）。要約の記録が無い複製（この仕組みより前）は、
+        # 複製の先頭と比べる
+        old_fingerprint = manifest.get(FINGERPRINTS_KEY, {}).get(stem)
+        if old_fingerprint is not None:
+            unchanged = old_fingerprint == _fingerprint(new_bits, new_labels)
+        else:
+            unchanged = (len(new_labels) == old_count and user_labels[:old_count] == new_labels
+                         and np.array_equal(user_bits[:old_count], new_bits))
+        if unchanged:
+            continue
         kind = _kind_of(stem)
         added_bits = [bits for bits in user_bits[old_count:]]
         added_labels = user_labels[old_count:]
