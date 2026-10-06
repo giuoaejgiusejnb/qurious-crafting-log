@@ -91,11 +91,11 @@ python -m venv .venv
 ### Windows向けビルド（インストーラー作成）
 
 ```powershell
-.venv\Scripts\flet build windows
-& "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\qurious_crafting_log.iss
+pwsh -File scripts\build_release.ps1
 ```
 
-`build\installer\qurious-crafting-log-setup.exe` が生成されます。
+`build\installer\qurious-crafting-log-setup.exe` が生成されます。コミット済みの内容を `C:\build\qcl` に書き出して
+ビルドします（プロジェクトのフォルダで直接ビルドすると、フォルダのパスが exe の中に記録されるため）。
 
 新しいバージョンをリリースする際は、`app/version.py` の `APP_VERSION` を、GitHub Releasesの
 タグ名と一致するように更新してください（アプリ内の更新チェック機能がこの値を参照します）。
