@@ -122,6 +122,22 @@ def test_unsupported_resolution_stops_before_reading(tmp_path):
     assert sorted(p.name for p in templates.iterdir()) == before
 
 
+def test_reading_time_excludes_wait_between_start_and_finish(tmp_path):
+    """読み取りの時間に、ラベル入力のダイアログで待っている時間（start と finish の間）を含めない。"""
+    import time
+
+    from app.ocr.kuijin_ocr import finish_reading, list_images, start_reading
+
+    images = tmp_path / "images"
+    images.mkdir()
+    _write_jpeg(images / "1.jpg", 1280, 720)
+    begin = time.perf_counter()
+    session = start_reading(list_images([images]), 3, 4000, None, user_template_dir(tmp_path / "data"), use_processes=False)
+    time.sleep(1.0)
+    run = finish_reading(session)
+    assert run.timings["total"] < time.perf_counter() - begin - 0.9
+
+
 def test_build_report_marks_hidden_minus(tmp_path):
     """結果画面２で写っていないスキルがすべてマイナスと確定したら、印「何らかのマイナススキル」を付け、マイナスを「有」にする。"""
     values = _values("100", "逆恨み", "+1")

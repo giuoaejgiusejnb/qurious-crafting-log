@@ -1214,12 +1214,15 @@ def start_reading(
     t_match = time.perf_counter() - start - t_extract
 
     session.build_values()   # 新しい形の文字をここで見つけておく（pending_labels に出すため）
-    session.timings = {"extract": t_extract, "match": t_match, "start": start}
+    # "started" は start_reading にかかった時間。finish_reading までの間にラベル入力のダイアログで
+    # ユーザーが見本を選ぶので、開始からの経過時間で測るとその待ち時間まで含んでしまう
+    session.timings = {"extract": t_extract, "match": t_match, "started": time.perf_counter() - start}
     return session
 
 
 def finish_reading(session: OcrSession) -> OcrRun:
     """付いているラベルで結果を作り、見本を保存する。"""
+    start = time.perf_counter()
     session.build_values()
     for b in session.banks.values():
         if b.kind == "slot":
@@ -1251,7 +1254,8 @@ def finish_reading(session: OcrSession) -> OcrRun:
     report = build_report(records, session.zenny_step // 1000, session.template_dir, session.minus_skills,
                           session.table)
     t = session.timings
-    timings = {"extract": t["extract"], "match": t["match"], "total": time.perf_counter() - t["start"]}
+    timings = {"extract": t["extract"], "match": t["match"],
+               "total": t["started"] + time.perf_counter() - start}
     return OcrRun(report, records, session.paths, session.results, session.screen_of,
                   list(session.banks.values()), session.template_dir, timings)
 
