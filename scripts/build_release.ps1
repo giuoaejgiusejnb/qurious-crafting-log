@@ -6,10 +6,12 @@
 # 記録される。subst でドライブを割り当てても、元の場所に読み替えて記録されるので防げない。
 # そのため、コミット済みのファイルだけをユーザー名を含まないフォルダに書き出し、そこでビルドする
 # （開発中の __pycache__ も入らない）。できたインストーラーは build\installer\ に置く。
+# ビルド用のフォルダは、成功したら消す（-KeepBuildDir で残す）。
 param(
     [string]$BuildDir = "C:\build\qcl",
     [string]$TempDir = "C:\build-tmp",
-    [string]$Iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+    [string]$Iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+    [switch]$KeepBuildDir   # ビルド用のフォルダを残す（exe の中身を調べたいとき。既定では終わったら消す）
 )
 $ErrorActionPreference = "Stop"
 $repo = (Resolve-Path "$PSScriptRoot\..").Path
@@ -62,4 +64,12 @@ $out = Join-Path $repo "build\installer"
 New-Item -ItemType Directory -Force $out | Out-Null
 Copy-Item (Join-Path $BuildDir "build\installer\qurious-crafting-log-setup.exe") $out -Force
 Get-Item (Join-Path $out "qurious-crafting-log-setup.exe") | Select-Object FullName, Length, LastWriteTime
-Write-Host "exe は $BuildDir\build\windows にあります（コミット $(git -C $repo rev-parse --short HEAD)）"
+Write-Host "コミット $(git -C $repo rev-parse --short HEAD) の内容でビルドしました"
+
+# ビルド用のフォルダは次回も最初から作り直すので、残しても使われない（約 1.3GB）。成功したら消す
+# （失敗したときは、原因を調べられるように残る）
+if ($KeepBuildDir) {
+    Write-Host "exe は $BuildDir\build\windows にあります"
+} else {
+    Remove-Item -LiteralPath $BuildDir, $TempDir -Recurse -Force
+}
