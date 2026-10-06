@@ -67,7 +67,7 @@ result_log と同じ形式にする。取込タブの「練成画像から取込
 
 ## データの置き方
 
-画像（数十 GB）はリポジトリに入れない。これまでの画像は `C:\Users\takuy\OneDrive\Desktop\dev\mhrise-skill-ocr\samples\` にある:
+画像（数十 GB）はリポジトリに入れない。これまでの画像は `mhrise-skill-ocr\samples\`（このリポジトリの隣のフォルダ） にある:
 
 ```
 samples/base_slot{初期スロット}/{バッチ名}/   … 1 回の連続した記録の画像（Switch の命名のまま）

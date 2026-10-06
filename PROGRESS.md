@@ -1,7 +1,7 @@
 # 実装フェーズ一覧
 
 モンスターハンター錬成結果 記録・検索アプリの実装計画と進捗。
-設計の全体像は `C:\Users\takuy\.claude\plans\snappy-popping-hummingbird.md` を参照。
+設計の全体像は `.claude\plans\snappy-popping-hummingbird.md`（ユーザーフォルダの下） を参照。
 
 全9フェーズ。現在 **Phase 5 完了、Phase 6・8は不要と判断して見送り、Phase 7はDB保存先変更により対応不要と判断**。
 
