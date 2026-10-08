@@ -50,3 +50,9 @@ exclude = [
 # 同梱するパッケージの .py を .pyc にしない。OpenCV（cv2）は読み込み時に config.py という
 # ソースファイルそのものを探すため、.pyc だけにすると「missing configuration file」で読み込めない
 packages = false
+
+[tool.flet.flutter.pubspec.dependency_overrides]
+# Flet のひな形は jni を 1.0.0 に固定しているが、jni_flutter 1.0.4+1（2026-10-08 公開）は jni 1.1.0 以上を
+# 前提にしていて、ビルドが「Constant evaluation error」（generated_plugin.dart の JniVersionCheck）で失敗する。
+# ビルドのたびに最新を取り直すので、通っていた 1.0.3 に固定する（Flet を上げたら外せるか確かめる）
+jni_flutter = "1.0.3"
