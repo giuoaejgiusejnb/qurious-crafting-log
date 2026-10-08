@@ -138,6 +138,21 @@ def test_reading_time_excludes_wait_between_start_and_finish(tmp_path):
     assert run.timings["total"] < time.perf_counter() - begin - 0.9
 
 
+def test_level_change_error_uses_skill_max_level():
+    """レベルの増減は、スキルごとの最大レベル（防具が元から持つスキルは元のレベルを引いた分）までを認める。"""
+    from app.ocr.kuijin_ocr import level_change_error
+
+    muscle = {"攻撃": 2, "火事場力": 3}
+    assert level_change_error("逆恨み", 5, 5, muscle) is None          # 最大レベル 5 のスキルの +5 は正しい
+    assert "最大レベル" in level_change_error("逆恨み", 6, 5, muscle)
+    assert "最大レベル" in level_change_error("体術", 4, 3, muscle)     # 以前の ±4 では見逃していた
+    assert level_change_error("攻撃", 5, 7, muscle) is None            # 元の Lv2 から Lv7 まで
+    assert "元のレベル Lv2" in level_change_error("攻撃", 6, 7, muscle)
+    assert level_change_error("攻撃", 7, 7, None) is None              # 元から持つスキルが分からなければ最大レベルまで
+    assert level_change_error("攻撃", -2, 7, muscle) is None           # マイナスは元のレベルとの比較を別に行う
+    assert "多く下がって" in level_change_error("体術", -4, 3, None)
+
+
 def test_build_report_marks_hidden_minus(tmp_path):
     """結果画面２で写っていないスキルがすべてマイナスと確定したら、印「何らかのマイナススキル」を付け、マイナスを「有」にする。"""
     values = _values("100", "逆恨み", "+1")

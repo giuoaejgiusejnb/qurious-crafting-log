@@ -773,7 +773,25 @@ def write_report(out: str, report: Report) -> None:
 
 SKILL_PROPS_FILE = "skill_props.json"
 ICON_TOLERANCE = 45          # アイコンの色の差（BGR の距離）。同じスキルの揺れは最大 25 程度、雷と龍は約 135
-VALUE_LIMITS = {"defense": 50, "resist": 12, "level": 4}   # これを超える増減はあり得ないとみなす
+VALUE_LIMITS = {"defense": 50, "resist": 12}   # これを超える増減はあり得ないとみなす
+
+
+def level_change_error(skill: str, lv: int, max_level: int, minus_skills: dict[str, int] | None) -> str | None:
+    """レベルの増減 lv が、スキルの最大レベル max_level から見てあり得なければ、その理由を返す。
+
+    増える分は「最大レベル − 防具が元から持つレベル」まで。減る分は元のレベルまでで、元から持つスキルが
+    分かっているとき（minus_skills）は check_consistency が別に調べるので、ここでは分からないときだけ
+    最大レベルと比べる。以前はスキルに関係なく ±4 までとしていたが、最大レベルが 5・7 のスキルの +5 以上を
+    誤って矛盾とし、最大レベル 3 のスキルの +4 を見逃していた。
+    """
+    if lv > 0:
+        base = (minus_skills or {}).get(skill, 0)
+        if lv > max_level - base:
+            origin = f"、防具の元のレベル Lv{base}" if base else ""
+            return f"{skill} の最大レベル（Lv{max_level}{origin}）を超えて上がっています"
+    elif minus_skills is None and -lv > max_level:
+        return f"{skill} の最大レベル（Lv{max_level}）より多く下がっています"
+    return None
 
 
 def check_consistency(records: list, template_dir: Path,
@@ -783,7 +801,8 @@ def check_consistency(records: list, template_dir: Path,
       - 四角の総数（そのスキルの最大レベル）がスキルごとに決まった数か
       - スキル名の左のアイコンの色が、そのスキルの色か（「雷」と「龍」の取り違えなどに気付ける）
       - "Lv ±n" の文字色: 減った = 赤、増えて空きが残る = 緑、増えて最大に達した = オレンジ
-      - 防御力・耐性・レベルの増減が、あり得る範囲か
+      - 防御力・耐性の増減が、あり得る範囲か
+      - レベルの増減が、そのスキルの最大レベルから見てあり得るか（level_change_error）
       - minus_skills（防具が元から持つスキル -> 元のレベル）を渡したとき、下がったスキルがその中にあり、
         元のレベルより多く下がっていないか（レベルが下がるのは防具が元から持つスキルだけ）
     スキルの最大レベルとアイコンの色は templates/skill_props.json（確認済みのデータから作った表）と比べる。
@@ -808,8 +827,11 @@ def check_consistency(records: list, template_dir: Path,
             if not skill or feat is None or "?" in skill + lv:
                 continue
             where = f"{name}: {i}つ目のスキル「{skill} {lv}」"
-            if abs(int(lv)) > VALUE_LIMITS["level"]:
-                errors.append(f"{where} のレベルの増減が、ありえる範囲を超えています（読み間違いの疑い）")
+            # 最大レベルは確認済みの表の値を使う。表に無いスキルは、この画像の四角の数で代用する
+            max_level = props[skill]["max"] if skill in props else len(feat["bar"])
+            reason = level_change_error(skill, int(lv), max_level, minus_skills)
+            if reason:
+                errors.append(f"{where}: {reason}（読み間違いか「防具が元から持つスキル」の入力違いの疑い）")
             expected = "red" if int(lv) < 0 else "green" if "g" in feat["bar"] else "orange"
             if feat["color"] != expected:
                 errors.append(f"{where} の「Lv」の文字の色（{color_names.get(feat['color'], feat['color'])}）が、"
