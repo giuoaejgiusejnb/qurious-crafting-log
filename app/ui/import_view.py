@@ -29,6 +29,20 @@ _CUSTOM_COLOR = ft.Colors.AMBER_100
 _OPTIONS_PER_ROW = 4
 
 
+def _existing_dir(path: str | None) -> str | None:
+    """path か、その親のうち、今ある最も近いフォルダ。ドライブごと無ければ None。"""
+    if not path:
+        return None
+    start = Path(path)
+    for candidate in (start, *start.parents):
+        try:
+            if candidate.is_dir():
+                return str(candidate)
+        except OSError:
+            continue
+    return None
+
+
 def _zenny_step_options() -> list[ft.DropdownOption]:
     return [ft.DropdownOption(key="4000", text="4000"), ft.DropdownOption(key="6000", text="6000")]
 
@@ -421,9 +435,16 @@ def build_import_view(
             initial = get_setting(conn, LAST_IMAGE_DIR_KEY)
         finally:
             conn.close()
-        path = await ft.FilePicker().get_directory_path(
-            dialog_title="練成画像のフォルダを選択", initial_directory=initial
-        )
+        # 覚えている場所が今は無いドライブ（抜いた SD カードなど）にあると、ダイアログが
+        # 「指定されたドライブが見つかりません」（0x8007000f）で開けない
+        initial = _existing_dir(initial)
+        try:
+            path = await ft.FilePicker().get_directory_path(
+                dialog_title="練成画像のフォルダを選択", initial_directory=initial
+            )
+        except RuntimeError:
+            # 最初の場所が原因で開けなかった場合に備えて、場所を指定せずに開き直す
+            path = await ft.FilePicker().get_directory_path(dialog_title="練成画像のフォルダを選択")
         if path:
             selected_image_dir[0] = path
             # 次に選ぶときは、選んだフォルダの一つ上から始める（バッチごとのフォルダが並んでいるため）
