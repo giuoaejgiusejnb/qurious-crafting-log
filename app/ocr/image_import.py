@@ -56,7 +56,7 @@ def start_image_reading(
     """
     paths = list_images([image_dir])
     if not paths:
-        raise NoImagesError(f"{image_dir} に画像（*.jpg）がありません")
+        raise NoImagesError(f"{image_dir} の直下に画像（*.jpg）がありません（サブフォルダの中は読み取りません）")
     return start_reading(
         paths,
         base_slot,

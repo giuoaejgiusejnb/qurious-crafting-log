@@ -455,6 +455,9 @@ def build_import_view(
                 conn.close()
             count = len(list(Path(path).glob("*.jpg")))
             image_dir_text.value = f"{path}（画像 {count} 枚）"
+            if count == 0:
+                # 「月」や「年」のフォルダを選ぶと直下に画像が無い。サブフォルダは読み取らないことを伝える
+                image_dir_text.value += "\nこのフォルダの直下に画像がありません。画像が入っているフォルダを選んでください。"
             image_dir_text.italic = False
             page.update()
 
@@ -623,7 +626,8 @@ def build_import_view(
             ft.Text("練成画像から取込（8bit）", size=16, weight=ft.FontWeight.BOLD),
             ft.Text(
                 "Switch で撮った「傀異強化結果」画面のスクリーンショット（*.jpg）を、"
-                "1回の連続した記録ごとに1つのフォルダに入れて選択してください。",
+                "1回の連続した記録ごとに1つのフォルダに入れて選択してください。\n"
+                "読み取るのは、選んだフォルダの直下にある画像だけです（サブフォルダの中は読み取りません）。",
             ),
             ft.Row([base_slot_field, zenny_step_dropdown, table_dropdown, minus_skills_field], wrap=True),
             ft.Row([select_dir_button, image_dir_text]),
