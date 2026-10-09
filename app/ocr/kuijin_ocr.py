@@ -79,6 +79,12 @@ MATCH_THRESHOLD = {"default": (0.15, 0.2),
                    "name": (0.03, 0.15),
                    "glyph": (0.15, 1.0),   # 1 文字ずつなので全体の IoU だけ
                    "money_glyph": (0.15, 1.0)}
+# スキル名が上の基準でどの見本にも当たらなかったときの、ゆるい基準。アイコンの色と四角の数（最大レベル）が
+# そのスキルと合う見本だけを相手にする（TemplateBank.match）。ドックに入れて撮った画像（TV モード）は、
+# 携帯モードで作った見本と文字の描かれ方が少し違い、上の基準ではほとんどが新しい見本になる。
+# 文字の形だけでゆるめると「雷」と「龍」、「水」と「氷」を取り違えるが、この組はアイコンの色が違う
+# （経緯と数値は docs/ocr_render_difference.md）
+NAME_LOOSE_THRESHOLD = (0.20, 0.25)
 BLOCK_W = 16
 SIGNATURE_THRESHOLD = 0.3
 MIN_INK = 40              # スキル名行の画素数がこれ未満ならスキル無し
@@ -455,6 +461,8 @@ class TemplateBank:
             self.sources = [None] * len(self.labels)
         self.new_from = len(self.labels)
         self.cache: dict[bytes, int] = {}
+        self.loose_matches = 0   # ゆるい基準（NAME_LOOSE_THRESHOLD）で見本に当てた切り出しの種類の数
+        self._props: dict | None = None
 
     @property
     def name(self) -> str:
@@ -468,13 +476,19 @@ class TemplateBank:
             return True
         return self.kind in ("name", "slot") and "?" in label
 
-    def match(self, bits: np.ndarray, source: tuple[str, str] | None = None) -> int:
-        """一致するテンプレート番号を返す。無ければ新規登録する。"""
+    def match(self, bits: np.ndarray, source: tuple[str, str] | None = None,
+              features: dict[str, str] | None = None) -> int:
+        """一致するテンプレート番号を返す。無ければ新規登録する。
+
+        features（skill_features の結果）を渡すと、スキル名がどの見本にも当たらなかったときに
+        ゆるい基準でもう一度探す（_loose_match）。
+        """
         bits = bits.reshape(-1)
         if len(self.labels):
             whole, block = MATCH_THRESHOLD.get(self.kind, MATCH_THRESHOLD["default"])
-            dist = iou_distance(self.bits, bits)
-            dist = np.where(block_distance(self.bits, bits, self.shape) < block, dist, 1.0)
+            whole_dist = iou_distance(self.bits, bits)
+            block_dist = block_distance(self.bits, bits, self.shape)
+            dist = np.where(block_dist < block, whole_dist, 1.0)
             best = int(dist.argmin())
             if dist[best] < whole:
                 # 保存済みのテンプレートは元画像が分からないので、最初に当たった画像を覚えておく
@@ -482,10 +496,37 @@ class TemplateBank:
                 if self.sources[best] is None:
                     self.sources[best] = source
                 return best
+            if self.kind == "name" and features:
+                loose = self._loose_match(whole_dist, block_dist, features)
+                if loose is not None:
+                    self.loose_matches += 1
+                    return loose
         self.bits = np.vstack([self.bits, bits])
         self.labels.append(None)
         self.sources.append(source)
         return len(self.labels) - 1
+
+    def _loose_match(self, whole_dist: np.ndarray, block_dist: np.ndarray, features: dict[str, str]) -> int | None:
+        """ゆるい基準で、アイコンの色と四角の数がスキルと合う見本のうち、いちばん近いものを返す。無ければ None。
+
+        相手にするのは、ラベルが確定していて、skill_props.json に確認済みの性質があるスキルの見本だけ。
+        """
+        if not features.get("icon"):
+            return None
+        if self._props is None:
+            path = self.template_dir / SKILL_PROPS_FILE
+            self._props = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        icon = np.array([int(x) for x in features["icon"].split(":")])
+        whole, block = NAME_LOOSE_THRESHOLD
+        for i in np.argsort(whole_dist):
+            if whole_dist[i] >= whole:
+                break
+            prop = None if self.is_unlabeled(int(i)) else self._props.get(self.labels[i])
+            if (block_dist[i] < block and prop and prop.get("icon") and "unverified" not in prop
+                    and len(features.get("bar", "")) == prop["max"]
+                    and np.linalg.norm(icon - np.array(prop["icon"])) <= ICON_TOLERANCE):
+                return int(i)
+        return None
 
     def unpack(self, packed: np.ndarray) -> np.ndarray:
         return np.unpackbits(packed)[: self.bits.shape[1]].astype(bool)
@@ -1252,7 +1293,9 @@ def start_reading(
             b = session.bank(ex["device"], kind)
             key = packed.tobytes()   # 全く同じ切り出しは多いので、照合結果を使い回す
             if key not in b.cache:
-                b.cache[key] = b.match(b.unpack(packed), (path, fld))
+                # スキル名（fld は "skill1" など）には、その行のアイコンの色と四角の並びも渡す
+                features = ex["features"].get(int(fld[5:])) if kind == "name" else None
+                b.cache[key] = b.match(b.unpack(packed), (path, fld), features)
             ids[fld] = (b, b.cache[key])
         mb = session.bank(ex["device"], "money_glyph")
         ids["money"] = (mb, [mb.cache.setdefault(g.tobytes(), mb.match(mb.unpack(g), (path, "money")))

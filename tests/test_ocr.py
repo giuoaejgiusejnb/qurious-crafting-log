@@ -85,6 +85,38 @@ def test_template_bank_is_unlabeled(tmp_path):
     assert [glyphs.is_unlabeled(i) for i in range(3)] == [False, False, True]
 
 
+def test_name_loose_match_needs_icon_and_bar(tmp_path):
+    """スキル名が今の基準で当たらないとき、アイコンの色と四角の数が合う見本にだけ、ゆるい基準で当てる。
+
+    ドックに入れて撮った画像（TV モード）は文字の描かれ方が少し違い、携帯モードで作った見本に当たらない。
+    """
+    import json
+
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import SKILL_PROPS_FILE, TemplateBank
+
+    templates = user_template_dir(tmp_path)
+    props = json.loads((templates / SKILL_PROPS_FILE).read_text(encoding="utf-8"))
+    names = TemplateBank(templates, "1280x720", "name")
+    count = len(names.labels)
+    skill = "雷属性攻撃強化"
+    thin = names.bits[names.labels.index(skill)].copy()
+    thin[np.flatnonzero(thin)[::12]] = False   # 線が少し細い（違いは約 8%。今の基準は 3% 未満）
+
+    def features(of: str, bar: str = "Ggggg") -> dict:
+        return {"icon": ":".join(str(v) for v in props[of]["icon"]), "bar": bar, "color": "green"}
+
+    hit = names.match(thin, None, features(skill))
+    assert names.labels[hit] == skill and len(names.labels) == count and names.loose_matches == 1
+    # 四角の数（最大レベル）やアイコンの色が合わなければ当てず、新しい見本にする（ラベル入力になる）
+    assert names.match(thin, None, features(skill, bar="Ggg")) == count
+    names = TemplateBank(templates, "1280x720", "name")
+    assert names.match(thin, None, features("攻撃")) == count
+    names = TemplateBank(templates, "1280x720", "name")
+    assert names.match(thin) == count   # アイコンの色などを渡さなければ、今までどおり
+
+
 def test_label_choices():
     from app.ocr.kuijin_ocr import label_choices
 
