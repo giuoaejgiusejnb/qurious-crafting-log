@@ -46,6 +46,9 @@ result_log と同じ形式にする。取込タブの「練成画像から取込
 - 開発用の optional-dependencies `ocr-dev` は Pillow だけ（`spot_check.py` と `--slot-sheet` で使う）
 - EasyOCR は使わない（下記「EasyOCR による検算の終了」）
 - Windows。Python は `PYTHONIOENCODING=utf-8` を付けて実行すると日本語の出力が化けない
+- 画像の読み書きは `kuijin_ocr.py` の `imread` / `imwrite` で行う。`cv2.imread` / `cv2.imwrite` は使わない
+  （Windows では日本語などを含むパスを開けない。ユーザー名が日本語の PC で画面判定の見本が読めず、
+  すべての画像が「結果画面以外」になった。2026-10-09、v1.42 で修正）
 - 画像の切り出しは、ソースから起動したときは別プロセスで並列に、exe 版ではスレッドで行う
   （exe 版で子プロセスを起こすとアプリ本体が起動するおそれがあるため。7,500 枚で約 12 秒 → 約 26 秒）
 - numpy の OpenBLAS を 1 スレッドにしている（`app/ocr/__init__.py`）。既定では読み込んだだけで CPU の数だけ

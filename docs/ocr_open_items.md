@@ -48,6 +48,21 @@ v1.4 を使ったユーザーから、「フォルダを選択」でエラーに
 
 GitHub Releases に `v1.41` を公開した（2026-10-08。タグはコミット caf9f5e、リリースノートは `docs/release_notes_v1.41.md`）。
 
+## v1.42（準備中）
+
+v1.41 を使ったユーザーから、SD カードからコピーした画像がすべて「結果画面以外」になるという報告があったので、
+修正版を出す。調査の経緯は `docs/ocr_render_difference.md`。
+
+- **日本語などを含むパスで、画像と画面判定の見本を読み書きできない問題の修正**（コミット cbac0be）:
+  `cv2.imread` / `cv2.imwrite` は Windows でこうしたパスを開けない。Windows のユーザー名が日本語だと
+  `%LOCALAPPDATA%` の下の画面判定の見本が読めず、すべて「結果画面以外」になる。画像のフォルダのパスに
+  日本語が入っていると、すべて「読込失敗」になる。`app/ocr/kuijin_ocr.py` の `imread` / `imwrite` に替えた
+- 報告したユーザーの環境がこれに当たるかは未確認。この版で試してもらって切り分ける
+  （直らなければ、`docs/ocr_render_difference.md` の「描かれ方の違い」を元の画像で調べる）
+- それまで気づかなかった理由: 開発者の Windows のユーザー名も、検証に使った画像のフォルダ
+  （`mhrise-skill-ocr\samples\`、USB の `Nintendo\Album\...`）も英数字だけだった。テストも一時フォルダ
+  （英数字だけ）で行っていた。日本語を含むパスでのテストを足した（`test_images_and_templates_under_non_ascii_paths`）
+
 ## 配布後にやること: samples の整理（2026-09-30 決定）
 
 `mhrise-skill-ocr\samples\`（このリポジトリの隣のフォルダ）（画像 約 12.5 万枚・約 26GB、画像以外 約 40MB）は、
