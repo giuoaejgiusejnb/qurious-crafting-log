@@ -10,11 +10,16 @@
 import argparse
 import csv
 import random
+import sys
 from pathlib import Path
 
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))   # リポジトリ直下（app パッケージ）を import できるようにする
+
+from app.ocr.kuijin_ocr import imread  # noqa: E402
 
 PANEL = (slice(140, 550), slice(505, 775))   # 1280x720 の右側パネル（防御力〜スキル 3 つ目。結果画面２は 25 画素下がる）
 FONT = ImageFont.truetype("C:/Windows/Fonts/meiryo.ttc", 15)
@@ -61,14 +66,14 @@ def main():
     n_screen2 = len(picked)
     # レア演出は画像を見ないと分からないので、候補を多めに選んで赤いものを取る
     candidates = rng.sample(rows, min(len(rows), extra * 150))
-    candidates.sort(key=lambda r: -glow(cv2.imread(str(Path(args.image_dir) / r["file"]))))
+    candidates.sort(key=lambda r: -glow(imread(Path(args.image_dir) / r["file"])))
     picked += [r for r in candidates if r not in picked][:extra]
     rest = [r for r in rows if r not in picked]
     picked += rng.sample(rest, min(args.n - len(picked), len(rest)))
 
     out = Path(args.output)
     out.mkdir(parents=True, exist_ok=True)
-    tiles = [tile(cv2.imread(str(Path(args.image_dir) / r["file"])), r) for r in picked]
+    tiles = [tile(imread(Path(args.image_dir) / r["file"]), r) for r in picked]
     for s in range(0, len(tiles), PER_SHEET):
         group = tiles[s:s + PER_SHEET]
         group += [np.zeros_like(group[0])] * (PER_SHEET - len(group))

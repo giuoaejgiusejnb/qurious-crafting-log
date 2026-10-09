@@ -153,6 +153,32 @@ def test_level_change_error_uses_skill_max_level():
     assert "多く下がって" in level_change_error("体術", -4, 3, None)
 
 
+def test_images_and_templates_under_non_ascii_paths(tmp_path):
+    """日本語を含むパス（ユーザー名が日本語の PC など）でも、画像と画面判定の見本を読み書きできる。
+
+    cv2.imread / cv2.imwrite は Windows でこうしたパスを開けず、見本が読めないとすべての画像が
+    「結果画面以外」になっていた。
+    """
+    import cv2
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import LAYOUTS, _init_worker, _signatures, imread, imwrite, load_image, signature_dir
+
+    base = tmp_path / "日本語ユーザー" / "練成（TV）"
+    base.mkdir(parents=True)
+    _write_jpeg(base / "画像.jpg", 1280, 720)
+    assert load_image(str(base / "画像.jpg"))[1] == "1280x720"
+    imwrite(base / "保存.png", np.full((4, 6), 255, dtype=np.uint8))
+    assert imread(base / "保存.png", cv2.IMREAD_GRAYSCALE).shape == (4, 6)
+    assert imread(base / "無い.png") is None
+
+    templates = user_template_dir(base / "data")
+    assert "日本語" in str(signature_dir(templates))
+    _signatures.clear()
+    _init_worker(templates)
+    assert set(_signatures) == set(LAYOUTS)   # 画面判定の見本が読めている
+
+
 def test_build_report_marks_hidden_minus(tmp_path):
     """結果画面２で写っていないスキルがすべてマイナスと確定したら、印「何らかのマイナススキル」を付け、マイナスを「有」にする。"""
     values = _values("100", "逆恨み", "+1")

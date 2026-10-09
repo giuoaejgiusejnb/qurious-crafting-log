@@ -252,8 +252,30 @@ def calc_cost(values: dict[str, str]) -> str:
 
 # ---------------------------------------------------------------- 切り出し
 
+def imread(path: str | Path, flags: int = cv2.IMREAD_COLOR) -> np.ndarray | None:
+    """画像を読み込む。読めなければ None。
+
+    cv2.imread は、Windows では日本語などを含むパス（ユーザー名が日本語の PC の %LOCALAPPDATA%、
+    日本語の名前のフォルダなど）を開けず None を返す。画面判定の見本が読めないと、すべての画像が
+    「結果画面以外」になる。Python でファイルを読んでから展開すれば、パスの文字に左右されない。
+    """
+    try:
+        data = np.fromfile(path, dtype=np.uint8)
+    except OSError:
+        return None
+    return cv2.imdecode(data, flags) if data.size else None
+
+
+def imwrite(path: str | Path, img: np.ndarray) -> None:
+    """画像を保存する（cv2.imwrite も、日本語などを含むパスには書き込めない）。形式は拡張子で決まる。"""
+    ok, buf = cv2.imencode(Path(path).suffix, img)
+    if not ok:
+        raise OSError(f"画像を保存できません: {path}")
+    buf.tofile(path)
+
+
 def load_image(path: str) -> tuple[np.ndarray, str] | None:
-    img = cv2.imread(path, cv2.IMREAD_COLOR)
+    img = imread(path)
     if img is None:
         return None
     device = f"{img.shape[1]}x{img.shape[0]}"
@@ -272,7 +294,7 @@ def signature_dir(template_dir: Path) -> Path:
 def _init_worker(template_dir: Path) -> None:
     for layout in LAYOUTS:
         p = signature_dir(template_dir) / f"{layout}.png"
-        sig = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE) if p.exists() else None
+        sig = imread(p, cv2.IMREAD_GRAYSCALE) if p.exists() else None
         if sig is not None:
             _signatures[layout] = sig > 0
 
@@ -476,7 +498,7 @@ class TemplateBank:
         review.mkdir(parents=True, exist_ok=True)
         for i in range(self.new_from, len(self.labels)):
             img = self.bits[i].reshape(self.shape).astype(np.uint8) * 255
-            cv2.imwrite(str(review / f"{i:04d}.png"), cv2.resize(img, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST))
+            imwrite(review / f"{i:04d}.png", cv2.resize(img, None, fx=4, fy=4, interpolation=cv2.INTER_NEAREST))
 
 
 # ---------------------------------------------------------------- ラベル付け
@@ -1201,8 +1223,12 @@ def start_reading(
     use_processes=False ではスレッドで切り出す（exe 化したアプリではプロセスを起こせないことがあるため）。
     progress_callback には (段階, 済んだ枚数, 全枚数) を渡す（段階は "extract" と "match"）。
     """
-    if not list(signature_dir(template_dir).glob("*.png")):
+    signatures = list(signature_dir(template_dir).glob("*.png"))
+    if not signatures:
         raise FileNotFoundError(f"画面判定用の見本がありません: {signature_dir(template_dir)}")
+    # 見本があっても読めなければ、すべての画像が「結果画面以外」になってしまう。黙って進めずに止める
+    if all(imread(p, cv2.IMREAD_GRAYSCALE) is None for p in signatures):
+        raise OSError(f"画面判定用の見本を読み込めません: {signature_dir(template_dir)}")
     start = time.perf_counter()
     try:
         extracted = _extract_all(paths, template_dir, jobs, use_processes, progress_callback)
@@ -1311,7 +1337,7 @@ def save_signature(layout: str, path: str, template_dir: Path) -> None:
     bits = LAYOUTS[layout]["signature"].binarize(loaded[0])
     sig_dir = signature_dir(template_dir)
     sig_dir.mkdir(parents=True, exist_ok=True)
-    cv2.imwrite(str(sig_dir / f"{layout}.png"), bits.astype(np.uint8) * 255)
+    imwrite(sig_dir / f"{layout}.png", bits.astype(np.uint8) * 255)
     print(f"saved {sig_dir / f'{layout}.png'} ({bits.sum()} px)")
 
 
