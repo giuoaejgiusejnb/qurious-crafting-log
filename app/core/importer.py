@@ -4,6 +4,7 @@ import sqlite3
 from dataclasses import dataclass, field
 from typing import Callable
 
+from app.core.history import is_missing_shot_issue
 from app.core.models import ParsedResult
 from app.core.parser import parse_result_log_block
 from app.core.skill_mask import compute_mask
@@ -255,7 +256,9 @@ def import_block(
     return ImportSummary(
         batch_id=batch_id,
         imported_count=total,
-        error_count=len(errors) + len(skipped_results) + len(ocr_issues or []) + len(spec_issues or []),
+        # 矛盾のうち欠番の知らせは、「飛ばされている練成」（skipped_results）と重なるので数えない
+        error_count=len(errors) + len(skipped_results) + len(spec_issues or [])
+        + sum(1 for detail in ocr_issues or [] if not is_missing_shot_issue(detail)),
         errors=errors,
         skipped_results=skipped_results,
         dropped_duplicate_count=dropped_duplicate_count,

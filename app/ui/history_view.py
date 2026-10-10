@@ -82,13 +82,18 @@ def build_history_view(
                 skipped_controls.append(
                     ft.Text(f"練成回数：{count}　　ゼニー：{zeny_disp}", selectable=True)
                 )
+                if count in errors.skipped_between:
+                    # 画像読み取りのバッチ: どの画像の間で撮れていないか
+                    before, after = errors.skipped_between[count]
+                    skipped_controls.append(
+                        ft.Text(f"　　前後の画像：{before} → {after}", size=12, color=ft.Colors.GREY_700, selectable=True)
+                    )
 
         def open_unread_viewer(e: ft.Event[ft.Button]) -> None:
             from app.ui.unread_viewer import show_unread_viewer
 
-            # エラーの一覧を閉じてから、画像を 1 枚ずつ見るダイアログを開く。画像を閉じたら、エラーの一覧に戻る
-            page.pop_dialog()
-            show_unread_viewer(page, errors.unread, batch_id, on_close=lambda: show_error_dialog(batch_id))
+            # エラーの一覧の上に重ねて開く。画像を閉じると、エラーの一覧にそのまま（スクロールの位置も）戻る
+            show_unread_viewer(page, errors.unread, batch_id)
 
         ocr_controls: list[ft.Control] = []
         if errors.unread:

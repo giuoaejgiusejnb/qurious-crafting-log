@@ -7,6 +7,7 @@ import flet as ft
 
 from app.core.armor_defaults import reset_armor_defaults
 from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS, TABLE_NONE, resolve_ocr_params
+from app.core.history import is_missing_shot_issue
 from app.core.importer import ImportSummary, import_block
 from app.core.settings import get_json_setting, get_setting, set_json_setting, set_setting
 from app.db.connection import get_connection
@@ -602,7 +603,9 @@ def build_import_view(
             conn.close()
 
         run = result.run
-        extra = [f"読み取りの矛盾 {len(run.report.errors)}件", f"仕様違反 {len(run.report.spec_errors)}件"]
+        # 矛盾のうち欠番の知らせは、「欠番」として数えている分と重なるので数えない
+        conflicts = sum(1 for detail in run.report.errors if not is_missing_shot_issue(detail))
+        extra = [f"読み取りの矛盾 {conflicts}件", f"仕様違反 {len(run.report.spec_errors)}件"]
         # 読めない値があった行は取り込んでいない。何回目の練成かと画像を見てもらう
         # （finish_import が出す「結果を表示しますか」の確認でも知らせるので、先に入れておく）
         by_name = {Path(path).name: path for path in session.paths}

@@ -80,6 +80,31 @@ def test_unread_rows_are_saved_with_their_images(tmp_path):
     conn.close()
 
 
+def test_missing_shots_are_counted_once(tmp_path):
+    """結果画面を撮れていない回は「飛ばされている練成」として 1 回だけ数え、前後の画像を添える。
+
+    同じことが画像読み取りの矛盾（kind='ocr'）にも保存されるので、そちらは数えない（保存済みの古いバッチも同じ）。
+    """
+    from app.core.history import fetch_batch_errors, is_missing_shot_issue, list_batches
+    from app.core.importer import SOURCE_8BIT, import_block
+    from app.db.connection import get_connection
+
+    records = [_record("a.jpg", _values("100")), _record("b.jpg", _values("88")), _record("c.jpg", _values("84"))]
+    report = build_report(records, 4, tmp_path)
+    gaps = [e for e in report.errors if is_missing_shot_issue(e)]
+    assert gaps == ["2回分の画像がありません（撮り忘れの疑い）: a.jpg（100千ゼニー）→ b.jpg（88千ゼニー）"]
+
+    conn = get_connection(tmp_path / "test.db")
+    other = "所持ゼニーが増えています（別の記録の画像が混ざっているか、読み間違いの疑い）: x.jpg（1千ゼニー）→ y.jpg（2千ゼニー）"
+    summary = import_block(conn, report.text, "ギルパレ脚", source=SOURCE_8BIT, ocr_issues=[*report.errors, other])
+    assert summary.skipped_results == [(2, 96), (3, 92)] and summary.error_count == 3   # 欠番 2 + ほかの矛盾 1
+    errors = fetch_batch_errors(conn, summary.batch_id)
+    assert errors.skipped == [(2, 96), (3, 92)] and errors.ocr == [other]
+    assert errors.skipped_between == {2: ("a.jpg", "b.jpg"), 3: ("a.jpg", "b.jpg")}
+    assert errors.total == list_batches(conn)[0].error_count == 3
+    conn.close()
+
+
 def test_drop_detached_removes_sparks_away_from_the_value():
     """右寄せの数値の欄で、値の文字から離れた成分（耐性「+4」の火花など）を消す。"""
     import numpy as np
