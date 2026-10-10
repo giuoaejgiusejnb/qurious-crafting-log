@@ -135,21 +135,21 @@ def build_history_view(
             # 画像読み取り（8bit）のバッチだけ。自己チェックで見つかった矛盾
             ocr_controls += [
                 ft.Divider(),
-                ft.Text("画像読み取りの矛盾（要確認）", weight=ft.FontWeight.BOLD),
+                ft.Text(f"画像読み取りの矛盾（要確認）（{len(errors.ocr)}件）", weight=ft.FontWeight.BOLD),
                 *(ft.Text(f"・{detail}", selectable=True) for detail in errors.ocr),
             ]
         if errors.spec:
             # 画像読み取り（8bit）のバッチだけ。抽選の仕様で作れない結果（読み間違いの疑い）
             ocr_controls += [
                 ft.Divider(),
-                ft.Text("仕様違反（要確認）", weight=ft.FontWeight.BOLD),
+                ft.Text(f"仕様違反（要確認）（{len(errors.spec)}件）", weight=ft.FontWeight.BOLD),
                 ft.Text("抽選の仕様では作れない結果です。画像を見て、読み間違いがないか確認してください。", size=12),
                 *(ft.Text(f"・{detail}", selectable=True) for detail in errors.spec),
             ]
 
         content = ft.Column(
             [
-                ft.Text("読み込みできなかった行", weight=ft.FontWeight.BOLD),
+                ft.Text(f"読み込みできなかった行（{len(errors.unparsable)}件）", weight=ft.FontWeight.BOLD),
                 *unparsable_controls,
                 ft.Divider(),
                 ft.Text(f"飛ばされている練成（{len(errors.skipped)}件）", weight=ft.FontWeight.BOLD),
