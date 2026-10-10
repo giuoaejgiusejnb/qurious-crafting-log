@@ -4,6 +4,9 @@
 2. 確認画面: 画像と選んだラベルを並べて表示する（変更不可）。「この内容で確定」で見本のラベルが確定する。
    「戻って修正する」で入力画面に戻る
 どちらの画面でも「取込を中止」で何も保存せずにやめられる。
+
+ラベルの見直し（recheck=True）にも使う。数値の形にならない値（"+1+" など）ができたときに、その値に使われている
+文字の見本を、今のラベルを選んだ状態で並べる。
 """
 
 from typing import TYPE_CHECKING, Callable
@@ -42,15 +45,20 @@ def _images(item: "PendingLabel") -> list[ft.Control]:
 
 
 def _count_text(item: "PendingLabel") -> ft.Text:
-    return ft.Text(f"{item.count}枚の画像に出現" if item.count else "", size=12, color=ft.Colors.GREY_700)
+    if item.preset is not None:   # ラベルの見直し: この文字を含む、数値として読めない値が出た枚数
+        text = f"読めない値が{item.count}枚の画像に出現"
+    else:
+        text = f"{item.count}枚の画像に出現" if item.count else ""
+    return ft.Text(text, size=12, color=ft.Colors.GREY_700)
 
 
 def show_label_dialog(
-    page: ft.Page, pending: "list[PendingLabel]", base_slot: int, on_done: LabelsCallback
+    page: ft.Page, pending: "list[PendingLabel]", base_slot: int, on_done: LabelsCallback, recheck: bool = False
 ) -> None:
     """pending の見本ごとにラベルを選んでもらい、確認画面で確定したら on_done に渡す。
 
     「この内容で確定」ですべての見本のラベルを on_done に渡す。「取込を中止」は None を渡す。
+    recheck=True はラベルの見直し（OcrSession.suspect_labels の見本）で、説明の文と題名が変わる。
     """
     from app.ocr.kuijin_ocr import KIND_TITLES, label_choices
 
@@ -86,8 +94,15 @@ def show_label_dialog(
 
     # --- 入力画面 ---
     input_sections: list[ft.Control] = [
-        ft.Text("これまでの見本と一致しない表示がありました。画像を見て正しいものを選んでください。"
-                "選んだラベルは次回以降の読み取りにも使われます。"),
+        ft.Text(
+            "数値として読めない値（「+1+」など）がありました。その値に使われている文字を並べています。"
+            "赤枠の 1 文字と選ばれているラベルを見比べて、違っているものを選び直してください"
+            "（数字に「+」が付いている、など）。合っている文字も含まれています。\n"
+            "すべて合っている場合は、そのまま進めてください（該当する値の行は「読み込めない行」になります）。"
+            if recheck else
+            "これまでの見本と一致しない表示がありました。画像を見て正しいものを選んでください。"
+            "選んだラベルは次回以降の読み取りにも使われます。"
+        ),
         ft.Divider(),
     ]
     for kind in _KIND_ORDER:
@@ -101,7 +116,7 @@ def show_label_dialog(
                     ft.DropdownOption(key=c if c else _NOISE_KEY, text=_label_text(c))
                     for c in label_choices(kind)
                 ],
-                value=item.guess or None,
+                value=(item.preset or _NOISE_KEY) if item.preset is not None else (item.guess or None),
                 width=240 if kind == "name" else 180,
                 enable_filter=kind == "name",
                 editable=kind == "name",
@@ -158,7 +173,7 @@ def show_label_dialog(
         await content.scroll_to(offset=0, duration=0)
 
     def show_input() -> None:
-        dialog.title = ft.Text(f"新しい見本の確認（{len(items)}個）")
+        dialog.title = ft.Text(f"ラベルの見直し（{len(items)}個）" if recheck else f"新しい見本の確認（{len(items)}個）")
         content.controls = input_sections
         dialog.actions = [cancel_button, progress_text, submit_button]
         refresh_submit_state()

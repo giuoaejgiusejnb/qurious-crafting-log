@@ -125,6 +125,34 @@ def test_checked_number_marks_malformed_values():
     assert [checked_number(v) for v in ("+1+", "12", "+", "-+2")] == ["+1+?", "12?", "+?", "-+2?"]
 
 
+def test_suspect_labels_finds_glyphs_of_malformed_values(tmp_path):
+    """数字に「+」を付けるなどの選び間違いで数値の形にならない値ができたら、使われている文字の見本を返す。"""
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import DIGIT_SHAPE, VALUE_H, VALUE_W, OcrSession
+
+    session = OcrSession([], [], 3, 4000, None, user_template_dir(tmp_path))
+    glyphs, values = session.bank("1280x720", "glyph"), session.bank("1280x720", "value")
+    plus, one, zero = (glyphs.labels.index(c) for c in "+10")
+    canvas, x = np.zeros((VALUE_H, VALUE_W), dtype=bool), 2   # 「+10」を、文字の見本を並べて作る
+    for g in (plus, one, zero):
+        part = glyphs.bits[g].reshape(DIGIT_SHAPE)
+        part = part[np.ix_(part.any(axis=1), part.any(axis=0))]
+        canvas[1:1 + part.shape[0], x:x + part.shape[1]] = part
+        x += part.shape[1] + 2
+    index = values.match(canvas)
+    session.results = [{"defense": (values, index)}]
+    assert session.suspect_labels() == []
+
+    glyphs.labels[zero] = "+"   # 「0」に「+」を付けてしまった → 「+1+」
+    suspects = session.suspect_labels()
+    assert {p.index: p.preset for p in suspects} == {plus: "+", one: "1", zero: "+"}
+    assert all(p.count == 1 and p.kind == "glyph" for p in suspects)
+    # 入力中のラベル（まだ付けていない）で直せば、見直す見本は無くなる。見本のラベルは変えない
+    assert session.suspect_labels({(glyphs.name, zero): "0"}) == []
+    assert glyphs.labels[zero] == "+"
+
+
 def test_label_choices():
     from app.ocr.kuijin_ocr import label_choices
 

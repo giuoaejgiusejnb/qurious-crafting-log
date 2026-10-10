@@ -546,6 +546,12 @@ class TemplateBank:
 # ---------------------------------------------------------------- ラベル付け
 
 def read_number(bits: np.ndarray, glyphs: TemplateBank, source: tuple[str, str] | None = None) -> str:
+    """数値を読む（_read_number）。数値の形にならなければ、読めない値の印 "?" を付ける（checked_number）。"""
+    return checked_number(_read_number(bits, glyphs, source)[0])
+
+
+def _read_number(bits: np.ndarray, glyphs: TemplateBank,
+                 source: tuple[str, str] | None = None) -> tuple[str, list[int]]:
     """二値化済みの '+24' '-3' '-'（変化なし）などを 1 文字ずつ文字テンプレートと照合して読む。
 
     "-" は数画素しかなく
@@ -556,9 +562,12 @@ def read_number(bits: np.ndarray, glyphs: TemplateBank, source: tuple[str, str] 
 
     灰色の "-"（変化なし）は暗いため、近くに明るい演出の粒があると二値化で消える。
     色付きの数値は粒より明るく消えないので、何も残らなければ "-" とみなす。
+
+    読んだ文字列と、照合した文字テンプレートの番号（ノイズとして無視したものを含む）を返す。
     """
     n, labels, stats, _ = cv2.connectedComponentsWithStats(bits.astype(np.uint8), connectivity=8)
     text = ""
+    used: list[int] = []
     # 数字・"+" の上下の範囲。"-" はその中央付近にあるので、上端・下端の横長の粒（演出）は除く
     tall = [c for c in range(1, n) if stats[c, cv2.CC_STAT_HEIGHT] > 5]
     top = bottom = 0   # tall が無いときは使わない
@@ -591,13 +600,14 @@ def read_number(bits: np.ndarray, glyphs: TemplateBank, source: tuple[str, str] 
         glyph = np.zeros(DIGIT_SHAPE, dtype=bool)
         part = part[: DIGIT_SHAPE[0], : DIGIT_SHAPE[1]]
         glyph[: part.shape[0], : part.shape[1]] = part
-        label = glyphs.labels[glyphs.match(glyph, source)]
+        used.append(glyphs.match(glyph, source))
+        label = glyphs.labels[used[-1]]
         text += "?" if label is None else label
     # 灰色の "-" のそばに演出の粒（横長の小さな点）があると "--" になる。本物の値に "-" が
     # 2 つ続くことは無いので 1 つにまとめる
     while "--" in text:
         text = text.replace("--", "-")
-    return checked_number(text or "-")
+    return text or "-", used
 
 
 def checked_number(text: str) -> str:
@@ -1112,6 +1122,8 @@ class PendingLabel:
     glyph_png: bytes   # 文字の見本だけ: 二値化した 1 文字の拡大（image_png はその文字を含む欄）
     guess: str         # 候補（"?" 付きの古いラベルから "?" を除いたもの。無ければ ""）
     count: int         # この回の画像で当たった枚数（文字の見本は数えていないので 0）
+    # 今付いているラベル（"" はノイズ）。ラベルの見直し（suspect_labels）のときだけ入れる。None は見直しではない
+    preset: str | None = None
 
     @property
     def kind(self) -> str:
@@ -1206,6 +1218,43 @@ class OcrSession:
                     pending.append(PendingLabel(b, i, self._label_image(b, i), glyph, guess,
                                                 counts.get((b.name, i), 0)))
         return pending
+
+    def suspect_labels(self, labels: dict[tuple[str, int], str] | None = None) -> list[PendingLabel]:
+        """数値の形にならない値（"+1+" など）に使われている文字の見本。ラベルを見直してもらうために使う。
+
+        数字に「+」を付けるなどの選び間違いがあると、その文字を含む値がすべて数値の形にならず、読めない行になる。
+        保存する前に気づけるよう、この回の画像に出た値のうち数値の形にならないものを探し、その値に使われている
+        文字の見本をすべて返す（どれが間違いかは分からないので、合っている「+」や数字も含む。以前の取込で
+        保存済みの見本も含む）。labels は入力中のまだ付けていないラベルで、付けた場合の結果を調べる。
+        count は、その文字を含む数値の形にならない値が出た画像の枚数（多い順に返す）。
+        """
+        counts = self.hit_counts()
+        suspects: list[PendingLabel] = []
+        for b in list(self.banks.values()):
+            if b.kind != "value":
+                continue
+            glyphs = self.bank(b.device, "glyph")
+            saved = list(glyphs.labels)
+            for (bank_name, i), label in (labels or {}).items():
+                if bank_name == glyphs.name:
+                    glyphs.labels[i] = label
+            try:
+                images: dict[int, int] = {}
+                for i, bits in enumerate(b.bits):
+                    hits = counts.get((b.name, i), 0)
+                    if not hits:
+                        continue
+                    text, used = _read_number(bits.reshape(b.shape), glyphs, b.sources[i])
+                    if "?" not in text and checked_number(text) != text:
+                        for g in used:
+                            images[g] = images.get(g, 0) + hits
+                for g in sorted(images, key=lambda g: (-images[g], g)):   # 多くの値に効いている文字から
+                    glyph = _png(glyphs.bits[g].reshape(glyphs.shape).astype(np.uint8) * 255, 4)
+                    suspects.append(PendingLabel(glyphs, g, self._label_image(glyphs, g), glyph, "", images[g],
+                                                 preset=glyphs.labels[g]))
+            finally:
+                glyphs.labels = saved
+        return suspects
 
     def _label_image(self, b: TemplateBank, i: int) -> bytes:
         source = b.sources[i]

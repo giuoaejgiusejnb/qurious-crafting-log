@@ -525,9 +525,31 @@ def build_import_view(
             set_busy(False)
             raise
 
+        def review_then_finish(labels: dict[tuple[str, int], str], shown: dict | None = None) -> None:
+            """数値の形にならない値があれば、使われている文字のラベルを見直してもらってから取り込む。
+
+            見直しても何も変えなかったとき（shown と同じ）は、そのまま取り込む（該当する行は読み込めない行になる）。
+            """
+            suspects = session.suspect_labels(labels)
+            current = {p.key: p.preset for p in suspects}
+            if not suspects or current == shown:
+                page.run_thread(finish_image_import_with, session, label, labels)
+                return
+
+            def on_recheck(fixed: dict[tuple[str, int], str] | None) -> None:
+                if fixed is None:
+                    status_text.value = "取込を中止しました（新しい見本は保存していません）"
+                    set_busy(False)
+                    return
+                review_then_finish({**labels, **fixed}, current)
+
+            status_text.value = "数値として読めない値があります。文字のラベルを見直してください。"
+            page.update()
+            show_label_dialog(page, suspects, base_slot, on_recheck, recheck=True)
+
         pending = session.pending_labels()
         if not pending:
-            finish_image_import_with(session, label, {})
+            review_then_finish({})
             return
 
         def on_labels(labels: dict[tuple[str, int], str] | None) -> None:
@@ -535,7 +557,7 @@ def build_import_view(
                 status_text.value = "取込を中止しました（新しい見本は保存していません）"
                 set_busy(False)
                 return
-            page.run_thread(finish_image_import_with, session, label, labels)
+            review_then_finish(labels)
 
         status_text.value = f"新しい見本が {len(pending)}個 あります。正しいラベルを選んでください。"
         page.update()
