@@ -83,10 +83,25 @@ def build_history_view(
                     ft.Text(f"練成回数：{count}　　ゼニー：{zeny_disp}", selectable=True)
                 )
 
+        def open_unread_viewer(e: ft.Event[ft.Button]) -> None:
+            from app.ui.unread_viewer import show_unread_viewer
+
+            page.pop_dialog()   # エラーの一覧を閉じてから、画像を 1 枚ずつ見るダイアログを開く
+            show_unread_viewer(page, errors.unread, batch_id)
+
         ocr_controls: list[ft.Control] = []
+        if errors.unread:
+            # 画像読み取り（8bit）のバッチだけ。読めない値があって取り込まなかった画像
+            ocr_controls = [
+                ft.Divider(),
+                ft.Text(f"読めなかった画像（{len(errors.unread)}枚）", weight=ft.FontWeight.BOLD),
+                ft.Text("読み取れない値があったため、取り込んでいません（検索にも出ません）。画像を見て確認してください。",
+                        size=12),
+                ft.Button(content="画像を見る", on_click=open_unread_viewer),
+            ]
         if errors.ocr:
             # 画像読み取り（8bit）のバッチだけ。自己チェックで見つかった矛盾
-            ocr_controls = [
+            ocr_controls += [
                 ft.Divider(),
                 ft.Text("画像読み取りの矛盾（要確認）", weight=ft.FontWeight.BOLD),
                 *(ft.Text(f"・{detail}", selectable=True) for detail in errors.ocr),

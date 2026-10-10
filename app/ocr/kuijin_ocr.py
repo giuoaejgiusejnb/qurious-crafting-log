@@ -291,6 +291,20 @@ def load_image(path: str) -> tuple[np.ndarray, str] | None:
     return img, device
 
 
+# 読めなかった画像を見てもらうときに切り出す範囲（強化後のステータスの枠と、右の防具名。x0, y0, x1, y1）
+RESULT_VIEW_AREA = (495, 88, 1140, 615)
+
+
+def result_view_png(path: str) -> bytes | None:
+    """結果画面の、強化後のステータスと防具名の部分を PNG で返す。画像を読めなければ None。"""
+    loaded = load_image(path)
+    if loaded is None:
+        return None
+    x0, y0, x1, y1 = RESULT_VIEW_AREA
+    ok, buf = cv2.imencode(".png", loaded[0][y0:y1, x0:x1])
+    return buf.tobytes() if ok else None
+
+
 _signatures: dict[str, np.ndarray] = {}
 
 
@@ -454,6 +468,8 @@ class TemplateBank:
         self.labels: list[str | None] = []
         self.sources: list[tuple[str, str] | None] = []   # 新規テンプレートの元画像と項目（OCR 用）
         self.variant = variant   # 同じ種別でテンプレートを分けるときの接尾辞（スロットの "_base3" など）
+        # False なら、新しい見本を保存せず、ラベルも聞かない（アプリで、同梱の見本だけで読むとき。OcrSession.bank）
+        self.saved = True
         stem = template_dir / f"{device}_{kind}{variant}"
         self.npz_path, self.json_path = stem.with_suffix(".npz"), stem.with_suffix(".json")
         if self.npz_path.exists():
@@ -546,12 +562,6 @@ class TemplateBank:
 # ---------------------------------------------------------------- ラベル付け
 
 def read_number(bits: np.ndarray, glyphs: TemplateBank, source: tuple[str, str] | None = None) -> str:
-    """数値を読む（_read_number）。数値の形にならなければ、読めない値の印 "?" を付ける（checked_number）。"""
-    return checked_number(_read_number(bits, glyphs, source)[0])
-
-
-def _read_number(bits: np.ndarray, glyphs: TemplateBank,
-                 source: tuple[str, str] | None = None) -> tuple[str, list[int]]:
     """二値化済みの '+24' '-3' '-'（変化なし）などを 1 文字ずつ文字テンプレートと照合して読む。
 
     "-" は数画素しかなく
@@ -562,12 +572,9 @@ def _read_number(bits: np.ndarray, glyphs: TemplateBank,
 
     灰色の "-"（変化なし）は暗いため、近くに明るい演出の粒があると二値化で消える。
     色付きの数値は粒より明るく消えないので、何も残らなければ "-" とみなす。
-
-    読んだ文字列と、照合した文字テンプレートの番号（ノイズとして無視したものを含む）を返す。
     """
     n, labels, stats, _ = cv2.connectedComponentsWithStats(bits.astype(np.uint8), connectivity=8)
     text = ""
-    used: list[int] = []
     # 数字・"+" の上下の範囲。"-" はその中央付近にあるので、上端・下端の横長の粒（演出）は除く
     tall = [c for c in range(1, n) if stats[c, cv2.CC_STAT_HEIGHT] > 5]
     top = bottom = 0   # tall が無いときは使わない
@@ -600,14 +607,13 @@ def _read_number(bits: np.ndarray, glyphs: TemplateBank,
         glyph = np.zeros(DIGIT_SHAPE, dtype=bool)
         part = part[: DIGIT_SHAPE[0], : DIGIT_SHAPE[1]]
         glyph[: part.shape[0], : part.shape[1]] = part
-        used.append(glyphs.match(glyph, source))
-        label = glyphs.labels[used[-1]]
+        label = glyphs.labels[glyphs.match(glyph, source)]
         text += "?" if label is None else label
     # 灰色の "-" のそばに演出の粒（横長の小さな点）があると "--" になる。本物の値に "-" が
     # 2 つ続くことは無いので 1 つにまとめる
     while "--" in text:
         text = text.replace("--", "-")
-    return text or "-", used
+    return checked_number(text or "-")
 
 
 def checked_number(text: str) -> str:
@@ -748,6 +754,8 @@ class Report:
     line_count: int
     duplicate_count: int   # 同じ回の重複として除いた枚数
     spec_errors: list[str] = field(default_factory=list)   # 抽選の仕様で作れない結果（読み間違いの疑い）
+    # 読めない値（"?"）があって取り込めない行: (text の行番号〔1 始まり〕, 回数〔分からなければ None〕, 画像のファイル名)
+    unread: list[tuple[int, int | None, str]] = field(default_factory=list)
 
 
 def build_report(records: list, step_k: int, template_dir: Path,
@@ -804,7 +812,10 @@ def build_report(records: list, step_k: int, template_dir: Path,
             + "\n".join(",".join([c, z, *b]) for c, z, b in lines) + "\n")
     errors = warnings + check_sequence(rows, step_k) + check_consistency(records, template_dir, minus_skills)
     spec_errors = check_spec(lines, kept, table, minus_skills) if table is not None else []
-    return Report(text, errors, len(lines), dup, spec_errors)
+    # text の先頭 2 行は初期ゼニーと見出しなので、lines の i 番目は i + 3 行目
+    unread = [(i + 3, None if c == "?" else int(c), kept[i][0])
+              for i, (c, z, b) in enumerate(lines) if "?" in c + z + "".join(b)]
+    return Report(text, errors, len(lines), dup, spec_errors, unread)
 
 
 def describe_values(v: dict) -> str:
@@ -1122,8 +1133,6 @@ class PendingLabel:
     glyph_png: bytes   # 文字の見本だけ: 二値化した 1 文字の拡大（image_png はその文字を含む欄）
     guess: str         # 候補（"?" 付きの古いラベルから "?" を除いたもの。無ければ ""）
     count: int         # この回の画像で当たった枚数（文字の見本は数えていないので 0）
-    # 今付いているラベル（"" はノイズ）。ラベルの見直し（suspect_labels）のときだけ入れる。None は見直しではない
-    preset: str | None = None
 
     @property
     def kind(self) -> str:
@@ -1170,15 +1179,30 @@ class OcrSession:
     minus_skills: dict[str, int] | None
     template_dir: Path
     table: int | None = None   # 抽選テーブル（仕様のチェックに使う。None ならチェックしない）
+    # アプリでは、ユーザーがラベルを付けた見本の置き場所。None（CLI）なら、すべての見本を template_dir に保存する
+    label_dir: Path | None = None
     banks: dict[tuple[str, str], TemplateBank] = field(default_factory=dict)
     results: list[dict | None] = field(default_factory=list)
     screen_of: dict[str, str] = field(default_factory=dict)
     timings: dict[str, float] = field(default_factory=dict)
 
     def bank(self, device: str, kind: str) -> TemplateBank:
+        """見本を返す。
+
+        アプリ（label_dir あり）では、同梱の見本（template_dir）だけで読み、新しい見本は保存せず、ラベルも聞かない
+        （読めない値のある行は取り込まず、画像を見てもらう）。ユーザーにラベルを選んでもらうと、1 個の選び間違いが
+        その後の取込すべてに残るため（2026-10-10。docs/ocr_render_difference.md）。
+        例外は、同梱の見本が無い初期スロットのスロット欄。見本が 1 つも無いと全部の行が読めないので、
+        label_dir に置いてラベルを聞く。
+        """
         if (device, kind) not in self.banks:
-            self.banks[device, kind] = TemplateBank(self.template_dir, device, kind,
-                                                    f"_base{self.base_slot}" if kind == "slot" else "")
+            variant = f"_base{self.base_slot}" if kind == "slot" else ""
+            directory, saved = self.template_dir, self.label_dir is None
+            if (self.label_dir is not None and kind == "slot"
+                    and not (self.template_dir / f"{device}_slot{variant}.npz").exists()):
+                directory, saved = self.label_dir, True
+            self.banks[device, kind] = TemplateBank(directory, device, kind, variant)
+            self.banks[device, kind].saved = saved
         return self.banks[device, kind]
 
     def build_values(self) -> None:
@@ -1202,11 +1226,12 @@ class OcrSession:
         return counts
 
     def pending_labels(self) -> list[PendingLabel]:
-        """ラベルが確定していない見本（数値は文字の見本から組み立てるので除く）。"""
+        """ラベルを聞く見本: ラベルが確定していないもののうち、保存する見本のもの
+        （数値は文字の見本から組み立てるので除く。アプリでは、同梱の見本が無い初期スロットのスロット欄だけ）。"""
         counts = self.hit_counts()
         pending = []
         for b in self.banks.values():
-            if b.kind == "value":
+            if b.kind == "value" or not b.saved:
                 continue
             for i in range(len(b.labels)):
                 if b.is_unlabeled(i):
@@ -1218,43 +1243,6 @@ class OcrSession:
                     pending.append(PendingLabel(b, i, self._label_image(b, i), glyph, guess,
                                                 counts.get((b.name, i), 0)))
         return pending
-
-    def suspect_labels(self, labels: dict[tuple[str, int], str] | None = None) -> list[PendingLabel]:
-        """数値の形にならない値（"+1+" など）に使われている文字の見本。ラベルを見直してもらうために使う。
-
-        数字に「+」を付けるなどの選び間違いがあると、その文字を含む値がすべて数値の形にならず、読めない行になる。
-        保存する前に気づけるよう、この回の画像に出た値のうち数値の形にならないものを探し、その値に使われている
-        文字の見本をすべて返す（どれが間違いかは分からないので、合っている「+」や数字も含む。以前の取込で
-        保存済みの見本も含む）。labels は入力中のまだ付けていないラベルで、付けた場合の結果を調べる。
-        count は、その文字を含む数値の形にならない値が出た画像の枚数（多い順に返す）。
-        """
-        counts = self.hit_counts()
-        suspects: list[PendingLabel] = []
-        for b in list(self.banks.values()):
-            if b.kind != "value":
-                continue
-            glyphs = self.bank(b.device, "glyph")
-            saved = list(glyphs.labels)
-            for (bank_name, i), label in (labels or {}).items():
-                if bank_name == glyphs.name:
-                    glyphs.labels[i] = label
-            try:
-                images: dict[int, int] = {}
-                for i, bits in enumerate(b.bits):
-                    hits = counts.get((b.name, i), 0)
-                    if not hits:
-                        continue
-                    text, used = _read_number(bits.reshape(b.shape), glyphs, b.sources[i])
-                    if "?" not in text and checked_number(text) != text:
-                        for g in used:
-                            images[g] = images.get(g, 0) + hits
-                for g in sorted(images, key=lambda g: (-images[g], g)):   # 多くの値に効いている文字から
-                    glyph = _png(glyphs.bits[g].reshape(glyphs.shape).astype(np.uint8) * 255, 4)
-                    suspects.append(PendingLabel(glyphs, g, self._label_image(glyphs, g), glyph, "", images[g],
-                                                 preset=glyphs.labels[g]))
-            finally:
-                glyphs.labels = saved
-        return suspects
 
     def _label_image(self, b: TemplateBank, i: int) -> bytes:
         source = b.sources[i]
@@ -1319,9 +1307,11 @@ def start_reading(
     use_processes: bool = True,
     progress_callback: ProgressCallback | None = None,
     table: int | None = None,
+    label_dir: Path | None = None,
 ) -> OcrSession:
     """画像を切り出して見本と照合する（結果はまだ作らない）。
 
+    label_dir を渡すと（アプリ）、template_dir の見本は読むだけで保存しない（OcrSession.bank）。
     use_processes=False ではスレッドで切り出す（exe 化したアプリではプロセスを起こせないことがあるため）。
     progress_callback には (段階, 済んだ枚数, 全枚数) を渡す（段階は "extract" と "match"）。
     """
@@ -1341,7 +1331,7 @@ def start_reading(
     # 見本の無い解像度の画像は、照合すると見本がすべて新しくなってしまうので、照合の前に止める
     check_resolutions(paths, extracted, template_dir)
 
-    session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir, table)
+    session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir, table, label_dir)
     for n, (path, ex) in enumerate(zip(paths, extracted), start=1):
         if progress_callback and (n % MATCH_PROGRESS_STEP == 0 or n == len(paths)):
             progress_callback("match", n, len(paths))
@@ -1381,7 +1371,8 @@ def finish_reading(session: OcrSession) -> OcrRun:
             # 追加されたスロット数（"+0"〜"+6"）を手で付ける。未設定のものは要確認にする
             b.labels = [lab or f"?slot#{i}" for i, lab in enumerate(b.labels)]
     for b in session.banks.values():
-        b.save()
+        if b.saved:
+            b.save()
 
     # 1 枚ごとの値。ex が None なら読み込み失敗、values が None なら結果画面以外。
     # ラベルが付いていない見本は "?"（要確認）

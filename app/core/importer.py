@@ -30,6 +30,8 @@ class ImportSummary:
     skipped_results: list[tuple[int, int | None]] = field(default_factory=list)
     # 重複（幽霊行）として除去した行数。表示用途のみでDBには保存しない
     dropped_duplicate_count: int = 0
+    # errors のうち、画像読み取りで読めない値があった行の数（画像を見てもらう。kind='unread'）
+    unread_count: int = 0
 
 
 def _row_keep_score(result: ParsedResult) -> tuple[bool, bool]:
@@ -131,6 +133,7 @@ def import_block(
     source: str = SOURCE_NX,
     ocr_issues: list[str] | None = None,
     spec_issues: list[str] | None = None,
+    unread_images: dict[int, str] | None = None,
 ) -> ImportSummary:
     """result_logのテキストブロックをパースし、1つの取込バッチとしてDBに保存する。
 
@@ -141,6 +144,9 @@ def import_block(
     sourceは取込元（SOURCE_NX / SOURCE_8BIT）。ocr_issuesは画像読み取りの自己チェックで
     見つかった矛盾（kind='ocr'）、spec_issuesは抽選の仕様で作れない結果（kind='spec'）で、
     同じく import_issues に保存する。
+    unread_imagesは画像読み取りで読めない値があった行 {textの行番号（1始まり）: 画像のパス}。
+    その行のパースエラーは kind='unparsable' ではなく kind='unread'（detail は画像のパス）として保存し、
+    履歴タブで画像を見てもらう。
     """
     parsed, errors = parse_result_log_block(text)
     results, dropped_duplicate_count = _dedupe_consecutive_duplicates(parsed)
@@ -169,10 +175,12 @@ def import_block(
         conn.executemany(
             """
             INSERT INTO import_issues (batch_id, kind, line_number, zeny_count, detail)
-            VALUES (?, 'unparsable', ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?)
             """,
             [
-                (batch_id, line_number, _extract_zeny_count_from_message(message), message)
+                (batch_id, "unread", line_number, _extract_zeny_count_from_message(message), unread_images[line_number])
+                if unread_images and line_number in unread_images
+                else (batch_id, "unparsable", line_number, _extract_zeny_count_from_message(message), message)
                 for line_number, message in errors
             ],
         )
@@ -248,4 +256,5 @@ def import_block(
         errors=errors,
         skipped_results=skipped_results,
         dropped_duplicate_count=dropped_duplicate_count,
+        unread_count=sum(1 for line_number, _ in errors if unread_images and line_number in unread_images),
     )

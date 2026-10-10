@@ -87,6 +87,16 @@ def build_import_view(
     """
     progress_bar = ft.ProgressBar(width=400, value=0, visible=False)
     status_text = ft.Text()
+    # 画像取込で読めなかった画像 [(練成回数 or None, 画像のパス)] と、そのバッチ。取込のたびに入れ替える
+    unread_items: list[tuple[int | None, str]] = []
+    unread_batch: list[int | None] = [None]
+
+    def on_show_unread(e: ft.Event[ft.Button]) -> None:
+        from app.ui.unread_viewer import show_unread_viewer
+
+        show_unread_viewer(page, list(unread_items), unread_batch[0])
+
+    unread_button = ft.Button(content="", visible=False, on_click=on_show_unread)
 
     # --- 練成している防具 選択UI ---
     setting_conn = get_connection(db_path)
@@ -345,6 +355,8 @@ def build_import_view(
         image_import_button.disabled = busy
         select_dir_button.disabled = busy
         progress_bar.visible = busy
+        if busy:
+            unread_button.visible = False   # 前の取込の分は、次の取込を始めたら出さない
         page.update()
 
     def report_progress(done: int, total: int) -> None:
@@ -374,18 +386,27 @@ def build_import_view(
         )
         page.show_dialog(dialog)
 
-    def finish_import(summary: ImportSummary, label: str | None, extra_lines: list[str]) -> None:
-        """取込結果を表示し、他タブの一覧更新と「結果を表示しますか」の確認を行う（nx / 8bit 共通）。"""
+    def finish_import(
+        summary: ImportSummary, label: str | None, extra_lines: list[str], unread_lines: frozenset[int] = frozenset()
+    ) -> None:
+        """取込結果を表示し、他タブの一覧更新と「結果を表示しますか」の確認を行う（nx / 8bit 共通）。
+
+        unread_lines は、画像取込で読めない値があった行（取込テキストの行番号）。「読めなかった画像」として数え、
+        読込失敗（取込テキストとして読めなかった行）とは分けて表示する。
+        """
+        failed = [(ln, msg) for ln, msg in summary.errors if ln not in unread_lines]
+        unread = len(summary.errors) - len(failed)
         status_text.value = (
             f"取込完了: 成功 {summary.imported_count}件 / エラー {summary.error_count}件"
-            f"（読込失敗 {len(summary.errors)}件・欠番 {len(summary.skipped_results)}件"
+            f"（読込失敗 {len(failed)}件・欠番 {len(summary.skipped_results)}件"
+            + (f"・読めなかった画像 {unread}枚" if unread else "")
             + "".join(f"・{line}" for line in extra_lines)
             + f"） / 重複除外 {summary.dropped_duplicate_count}件"
             f"（バッチID: {summary.batch_id}）"
         )
         status_text.value += "\n詳細は履歴タブの「エラー」欄から確認できます。"
-        if summary.errors:
-            preview = "、".join(f"{ln}行目: {msg}" for ln, msg in summary.errors[:5])
+        if failed:
+            preview = "、".join(f"{ln}行目: {msg}" for ln, msg in failed[:5])
             status_text.value += f"\nエラー例: {preview}"
 
         set_busy(False)
@@ -525,31 +546,9 @@ def build_import_view(
             set_busy(False)
             raise
 
-        def review_then_finish(labels: dict[tuple[str, int], str], shown: dict | None = None) -> None:
-            """数値の形にならない値があれば、使われている文字のラベルを見直してもらってから取り込む。
-
-            見直しても何も変えなかったとき（shown と同じ）は、そのまま取り込む（該当する行は読み込めない行になる）。
-            """
-            suspects = session.suspect_labels(labels)
-            current = {p.key: p.preset for p in suspects}
-            if not suspects or current == shown:
-                page.run_thread(finish_image_import_with, session, label, labels)
-                return
-
-            def on_recheck(fixed: dict[tuple[str, int], str] | None) -> None:
-                if fixed is None:
-                    status_text.value = "取込を中止しました（新しい見本は保存していません）"
-                    set_busy(False)
-                    return
-                review_then_finish({**labels, **fixed}, current)
-
-            status_text.value = "数値として読めない値があります。文字のラベルを見直してください。"
-            page.update()
-            show_label_dialog(page, suspects, base_slot, on_recheck, recheck=True)
-
         pending = session.pending_labels()
         if not pending:
-            review_then_finish({})
+            finish_image_import_with(session, label, {})
             return
 
         def on_labels(labels: dict[tuple[str, int], str] | None) -> None:
@@ -557,7 +556,7 @@ def build_import_view(
                 status_text.value = "取込を中止しました（新しい見本は保存していません）"
                 set_busy(False)
                 return
-            review_then_finish(labels)
+            page.run_thread(finish_image_import_with, session, label, labels)
 
         status_text.value = f"新しい見本が {len(pending)}個 あります。正しいラベルを選んでください。"
         page.update()
@@ -581,7 +580,18 @@ def build_import_view(
 
         run = result.run
         extra = [f"読み取りの矛盾 {len(run.report.errors)}件", f"仕様違反 {len(run.report.spec_errors)}件"]
-        finish_import(result.summary, label, extra)
+        finish_import(result.summary, label, extra, frozenset(line for line, _, _ in run.report.unread))
+        # 読めない値があった行は取り込んでいない。何回目の練成かと画像を、ボタンから見てもらう
+        by_name = {Path(path).name: path for path in session.paths}
+        unread_items[:] = [(count, by_name[name]) for _, count, name in run.report.unread]
+        unread_batch[0] = result.summary.batch_id
+        if unread_items:
+            unread_button.content = f"読めなかった画像 {len(unread_items)}枚 を見る"
+            unread_button.visible = True
+            status_text.value += (
+                f"\n読み取れない値があった画像が {len(unread_items)}枚 あります。この分は取り込んでいません"
+                "（検索にも出ません）。下のボタンか、履歴タブの「エラー」欄から、画像を見て確認してください。"
+            )
         status_text.value += (
             f"\n画像 {result.image_count}枚 / 結果画面 {sum(run.screen_counts.values())}枚"
             f"（うちスキルが4つ以上で4つ目以降が写っていないもの {run.screen_counts.get('screen2', 0)}枚）"
@@ -590,12 +600,6 @@ def build_import_view(
         )
         if labels:
             status_text.value += f"\n新しい見本 {len(labels)}個 にラベルを付けました。"
-        if run.unlabeled:
-            status_text.value += (
-                "\nラベルが確定していない見本があります（該当する値は「?」になり、読み込めない行になります。"
-                "次回の画像取込で再度確認します）: "
-                + "、".join(f"{name} {n}個" for name, n in run.unlabeled.items())
-            )
         page.update()
 
     def on_image_import_click(e: ft.Event[ft.Button]) -> None:
@@ -656,6 +660,7 @@ def build_import_view(
             ft.Row([image_import_button, image_error_text], wrap=True),
             progress_bar,
             status_text,
+            unread_button,
         ],
         expand=True,
         scroll=ft.ScrollMode.AUTO,

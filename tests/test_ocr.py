@@ -57,6 +57,58 @@ def test_build_report_reports_missing_shots(tmp_path):
     assert any("2回分の画像がありません" in e for e in report.errors)
 
 
+def test_unread_rows_are_saved_with_their_images(tmp_path):
+    """読めない値（"?"）のある行は取り込まず、何回目の練成かと画像のパスを残す（履歴タブで画像を見てもらう）。"""
+    from app.core.history import fetch_batch_errors, list_batches
+    from app.core.importer import SOURCE_8BIT, import_block
+    from app.db.connection import get_connection
+
+    unreadable = _values("92")
+    unreadable.update({"water": "+?", "cost": "?"})
+    lost = _values("?")   # 所持ゼニーが読めないと、何回目か分からない
+    report = build_report([_record("a.jpg", _values("100")), _record("b.jpg", _values("96")),
+                           _record("c.jpg", unreadable), _record("d.jpg", lost)], 4, tmp_path)
+    assert report.unread == [(5, 3, "c.jpg"), (6, None, "d.jpg")]
+
+    conn = get_connection(tmp_path / "test.db")
+    summary = import_block(conn, report.text, "ギルパレ脚", source=SOURCE_8BIT,
+                           unread_images={line: f"D:/shots/{name}" for line, _, name in report.unread})
+    assert (summary.imported_count, summary.unread_count, len(summary.errors)) == (2, 2, 2)
+    errors = fetch_batch_errors(conn, summary.batch_id)
+    assert errors.unread == [(3, "D:/shots/c.jpg"), (None, "D:/shots/d.jpg")]
+    assert errors.unparsable == [] and errors.total == list_batches(conn)[0].error_count == 2
+    conn.close()
+
+
+def test_app_reads_with_bundled_templates_only(tmp_path):
+    """アプリ（label_dir あり）は同梱の見本だけで読み、保存もラベルの入力もしない。
+
+    例外は、同梱の見本が無い初期スロットのスロット欄だけ（見本が無いと全部の行が読めないため）。
+    """
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import OcrSession
+
+    def session(base_slot: int) -> OcrSession:
+        return OcrSession([], [], base_slot, 4000, None, BUNDLED_TEMPLATE_DIR, label_dir=tmp_path / "labels")
+
+    known = session(3)
+    names, slots = known.bank("1280x720", "name"), known.bank("1280x720", "slot")
+    assert not names.saved and not slots.saved and slots.template_dir == BUNDLED_TEMPLATE_DIR
+    new_name = names.match(np.ones(names.bits.shape[1], dtype=bool))   # どの見本にも当たらない形
+    assert names.labels[new_name] is None and known.pending_labels() == []
+
+    unknown = session(4)   # 初期スロット 4 の見本は同梱していない
+    slots = unknown.bank("1280x720", "slot")
+    assert slots.saved and slots.template_dir == tmp_path / "labels" and len(slots.labels) == 0
+    slots.match(np.ones(slots.bits.shape[1], dtype=bool))
+    assert [(p.kind, p.index) for p in unknown.pending_labels()] == [("slot", 0)]
+    assert not unknown.bank("1280x720", "glyph").saved
+
+    cli = OcrSession([], [], 3, 4000, None, BUNDLED_TEMPLATE_DIR)   # CLI は今までどおり、すべての見本を保存する
+    assert cli.bank("1280x720", "name").saved
+
+
 def test_user_template_dir_copies_bundled_templates(tmp_path):
     dst = user_template_dir(tmp_path)
     assert (dst / "screens" / "screen1.png").exists()
@@ -123,34 +175,6 @@ def test_checked_number_marks_malformed_values():
 
     assert [checked_number(v) for v in ("-", "+24", "-3", "+?")] == ["-", "+24", "-3", "+?"]
     assert [checked_number(v) for v in ("+1+", "12", "+", "-+2")] == ["+1+?", "12?", "+?", "-+2?"]
-
-
-def test_suspect_labels_finds_glyphs_of_malformed_values(tmp_path):
-    """数字に「+」を付けるなどの選び間違いで数値の形にならない値ができたら、使われている文字の見本を返す。"""
-    import numpy as np
-
-    from app.ocr.kuijin_ocr import DIGIT_SHAPE, VALUE_H, VALUE_W, OcrSession
-
-    session = OcrSession([], [], 3, 4000, None, user_template_dir(tmp_path))
-    glyphs, values = session.bank("1280x720", "glyph"), session.bank("1280x720", "value")
-    plus, one, zero = (glyphs.labels.index(c) for c in "+10")
-    canvas, x = np.zeros((VALUE_H, VALUE_W), dtype=bool), 2   # 「+10」を、文字の見本を並べて作る
-    for g in (plus, one, zero):
-        part = glyphs.bits[g].reshape(DIGIT_SHAPE)
-        part = part[np.ix_(part.any(axis=1), part.any(axis=0))]
-        canvas[1:1 + part.shape[0], x:x + part.shape[1]] = part
-        x += part.shape[1] + 2
-    index = values.match(canvas)
-    session.results = [{"defense": (values, index)}]
-    assert session.suspect_labels() == []
-
-    glyphs.labels[zero] = "+"   # 「0」に「+」を付けてしまった → 「+1+」
-    suspects = session.suspect_labels()
-    assert {p.index: p.preset for p in suspects} == {plus: "+", one: "1", zero: "+"}
-    assert all(p.count == 1 and p.kind == "glyph" for p in suspects)
-    # 入力中のラベル（まだ付けていない）で直せば、見直す見本は無くなる。見本のラベルは変えない
-    assert session.suspect_labels({(glyphs.name, zero): "0"}) == []
-    assert glyphs.labels[zero] == "+"
 
 
 def test_label_choices():

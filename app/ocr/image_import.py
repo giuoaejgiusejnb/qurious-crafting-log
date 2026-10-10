@@ -1,7 +1,8 @@
 """練成画像のフォルダを読み取り、1つの取込バッチ（取込元 8bit）としてDBに保存する。
 
-アプリでは、ラベルが確定していない見本（新しいスキル名・数字の形など）があれば
-ユーザーに正しいラベルを入力してもらってから結果を作るため、次の2段階で呼ぶ。
+読み取りは同梱の見本だけで行う。読めない値のある行は取り込まず、画像を見てもらう（履歴タブ）。
+同梱の見本が無い初期スロットの防具では、スロット欄の見本のラベルをユーザーに入力してもらってから
+結果を作るため、次の2段階で呼ぶ。
   1. start_image_reading   : 画像を切り出して見本と照合する（session.pending_labels() が入力待ち）
   2. finish_image_import   : 入力されたラベルを付けて結果を作り、DBに保存する
 """
@@ -13,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.importer import SOURCE_8BIT, ImportSummary, import_block
-from app.ocr.kuijin_ocr import OcrRun, OcrSession, finish_reading, list_images, start_reading, user_template_dir
+from app.ocr.kuijin_ocr import BUNDLED_TEMPLATE_DIR, OcrRun, OcrSession, finish_reading, list_images, start_reading
 
 # 進捗を (段階, 済み, 全体) で渡す。段階は "extract"（画像の切り出し）・"match"（見本との照合）・
 # "report"（結果の作成。済み・全体は 0）・"import"（DB への保存）
@@ -51,8 +52,9 @@ def start_image_reading(
 ) -> OcrSession:
     """image_dir の *.jpg を撮影順に切り出し、見本と照合する。
 
-    見本（テンプレート）は data_dir/ocr_templates を使う（初回は同梱の見本を複製する）。
-    この段階では見本を保存しないので、ここで止めても何も残らない。
+    見本（テンプレート）は同梱のものだけを使う。読めない値のある行は取り込まず、画像を見てもらう。
+    同梱の見本が無い初期スロットのスロット欄だけは、ラベルを選んでもらって data_dir/ocr_templates に保存する
+    （OcrSession.bank）。この段階では見本を保存しないので、ここで止めても何も残らない。
     """
     paths = list_images([image_dir])
     if not paths:
@@ -62,10 +64,11 @@ def start_image_reading(
         base_slot,
         zenny_step,
         minus_skills,
-        template_dir=user_template_dir(data_dir),
+        template_dir=BUNDLED_TEMPLATE_DIR,
         use_processes=can_use_processes(),
         progress_callback=progress_callback,
         table=table,
+        label_dir=data_dir / "ocr_templates",
     )
 
 
@@ -78,7 +81,7 @@ def finish_image_import(
 ) -> ImageImportResult:
     """labels（{(見本の名前, 番号): ラベル}）を見本に付けて保存し、読み取り結果を取込形式にして import_block で保存する。
 
-    ラベルを付けなかった見本は "?" のまま（その行は「読み込みできなかった行」になる）。
+    読めない値（"?"）のある行は取り込まず、画像のパスを kind='unread' として保存する（履歴タブで画像を見てもらう）。
     読み取りの自己チェックで見つかった矛盾は kind='ocr'、抽選の仕様で作れない結果は kind='spec' として、
     バッチのエラーに保存する。
     """
@@ -87,6 +90,7 @@ def finish_image_import(
     if progress_callback:
         progress_callback("report", 0, 0)
     run = finish_reading(session)
+    by_name = {Path(path).name: path for path in session.paths}
     summary = import_block(
         conn,
         run.report.text,
@@ -95,6 +99,7 @@ def finish_image_import(
         source=SOURCE_8BIT,
         ocr_issues=run.report.errors,
         spec_issues=run.report.spec_errors,
+        unread_images={line: by_name[name] for line, _, name in run.report.unread},
     )
     return ImageImportResult(len(session.paths), run, summary)
 
