@@ -69,7 +69,7 @@ from app.ocr.spec import (
 
 BASE_SIZE = (1280, 720)   # (幅, 高さ) この大きさにそろえてから処理する
 # 同梱の見本（確認済みのテンプレート）。CLI は既定でここを読み書きする。
-# アプリはインストール先に書き込めないため、user_template_dir() で作業用の複製を使う
+# アプリもここを読む（読むだけ。新しい見本は保存しない。OcrSession.bank）
 BUNDLED_TEMPLATE_DIR = Path(__file__).with_name("templates")
 
 # 同一テンプレートとみなす条件: 全体の 1 - IoU と、文字 1 つ分（BLOCK_W 幅）ごとの 1 - IoU の最大値
@@ -1065,20 +1065,6 @@ MATCH_PROGRESS_STEP = 50    # 見本との照合の進捗を知らせる間隔�
 # 進捗がまとめて進むので、小さく分ける（プロセスで 64 枚ずつだと USB から 9,742 枚で数秒おきにしか進まなかった。
 # 8 枚にしても全体の時間は変わらない: 5,974 枚で 6.2 秒 → 5.7 秒）
 EXTRACT_CHUNK = 8
-
-
-def user_template_dir(data_dir: Path, bundled: Path = BUNDLED_TEMPLATE_DIR) -> Path:
-    """アプリが使う見本の置き場所（data_dir/ocr_templates）。
-
-    インストール先（Program Files）には書き込めず、新しい見本や skill_props.json の追記が
-    保存できないため、DB と同じユーザーのデータフォルダに複製して使う。無ければ同梱の見本を複製し、
-    あれば同梱の見本の更新（アプリの更新で増えた見本）を、ユーザーが付けた見本を残したまま取り込む。
-    """
-    from app.ocr.template_sync import sync_templates   # template_sync はこのモジュールを使うので、ここで読み込む
-
-    dst = data_dir / "ocr_templates"
-    sync_templates(dst, bundled)
-    return dst
 
 
 def parse_minus_skills(text: str) -> dict[str, int] | None:

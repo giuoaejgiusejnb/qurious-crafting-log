@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from app.core.parser import parse_result_log_block
-from app.ocr.kuijin_ocr import BUNDLED_TEMPLATE_DIR, build_report, parse_minus_skills, user_template_dir
+from app.ocr.kuijin_ocr import BUNDLED_TEMPLATE_DIR, build_report, parse_minus_skills
 
 
 def test_parse_minus_skills():
@@ -12,6 +12,14 @@ def test_parse_minus_skills():
     assert parse_minus_skills("") is None
     with pytest.raises(ValueError):
         parse_minus_skills("攻撃")
+
+
+def _copy_templates(dst: Path) -> Path:
+    """同梱の見本を dst に複製して返す（見本を書き換える・保存するテスト用。確認用の拡大画像は除く）。"""
+    import shutil
+
+    shutil.copytree(BUNDLED_TEMPLATE_DIR, dst, ignore=shutil.ignore_patterns("review"))
+    return dst
 
 
 def _values(money_k: str, skill1: str = "攻撃", lv1: str = "+1") -> dict:
@@ -184,18 +192,6 @@ def test_app_reads_with_bundled_templates_only(tmp_path):
     assert cli.bank("1280x720", "name").saved
 
 
-def test_user_template_dir_copies_bundled_templates(tmp_path):
-    dst = user_template_dir(tmp_path)
-    assert (dst / "screens" / "screen1.png").exists()
-    assert (dst / "1280x720_name.json").exists()
-    assert not (dst / "review").exists()   # 確認用の拡大画像は複製しない
-    # 2 回目以降は複製し直さない（ユーザーの環境で増えた見本を消さない）
-    (dst / "1280x720_name.json").write_text("[]", encoding="utf-8")
-    user_template_dir(tmp_path)
-    assert (dst / "1280x720_name.json").read_text(encoding="utf-8") == "[]"
-    assert (BUNDLED_TEMPLATE_DIR / "1280x720_name.json").read_text(encoding="utf-8") != "[]"
-
-
 def test_template_bank_is_unlabeled(tmp_path):
     from app.ocr.kuijin_ocr import TemplateBank
 
@@ -223,7 +219,7 @@ def test_name_loose_match_needs_icon_and_bar(tmp_path):
 
     from app.ocr.kuijin_ocr import SKILL_PROPS_FILE, TemplateBank
 
-    templates = user_template_dir(tmp_path)
+    templates = _copy_templates(tmp_path / "templates")
     props = json.loads((templates / SKILL_PROPS_FILE).read_text(encoding="utf-8"))
     names = TemplateBank(templates, "1280x720", "name")
     count = len(names.labels)
@@ -279,7 +275,7 @@ def test_unsupported_resolution_stops_before_reading(tmp_path):
         _write_jpeg(images / name, 1280, 720)
     _write_jpeg(images / "2.jpg", 1920, 1080)
     _write_jpeg(images / "4.jpg", 1920, 1080)
-    templates = user_template_dir(tmp_path / "data")
+    templates = _copy_templates(tmp_path / "templates")
     before = sorted(p.name for p in templates.iterdir())
 
     with pytest.raises(UnsupportedResolutionError) as exc_info:
@@ -299,7 +295,8 @@ def test_reading_time_excludes_wait_between_start_and_finish(tmp_path):
     images.mkdir()
     _write_jpeg(images / "1.jpg", 1280, 720)
     begin = time.perf_counter()
-    session = start_reading(list_images([images]), 3, 4000, None, user_template_dir(tmp_path / "data"), use_processes=False)
+    session = start_reading(list_images([images]), 3, 4000, None, _copy_templates(tmp_path / "templates"),
+                            use_processes=False)
     time.sleep(1.0)
     run = finish_reading(session)
     assert run.timings["total"] < time.perf_counter() - begin - 0.9
@@ -339,7 +336,7 @@ def test_images_and_templates_under_non_ascii_paths(tmp_path):
     assert imread(base / "保存.png", cv2.IMREAD_GRAYSCALE).shape == (4, 6)
     assert imread(base / "無い.png") is None
 
-    templates = user_template_dir(base / "data")
+    templates = _copy_templates(base / "templates")
     assert "日本語" in str(signature_dir(templates))
     _signatures.clear()
     _init_worker(templates)
