@@ -96,11 +96,13 @@ def test_missing_shots_are_counted_once(tmp_path):
 
     conn = get_connection(tmp_path / "test.db")
     other = "所持ゼニーが増えています（別の記録の画像が混ざっているか、読み間違いの疑い）: x.jpg（1千ゼニー）→ y.jpg（2千ゼニー）"
-    summary = import_block(conn, report.text, "ギルパレ脚", source=SOURCE_8BIT, ocr_issues=[*report.errors, other])
+    summary = import_block(conn, report.text, "ギルパレ脚", source=SOURCE_8BIT, ocr_issues=[*report.errors, other],
+                           image_dir="D:/shots")
     assert summary.skipped_results == [(2, 96), (3, 92)] and summary.error_count == 3   # 欠番 2 + ほかの矛盾 1
     errors = fetch_batch_errors(conn, summary.batch_id)
     assert errors.skipped == [(2, 96), (3, 92)] and errors.ocr == [other]
     assert errors.skipped_between == {2: ("a.jpg", "b.jpg"), 3: ("a.jpg", "b.jpg")}
+    assert errors.image_dir == "D:/shots"   # 前後の画像の場所を開くのに使う
     assert errors.total == list_batches(conn)[0].error_count == 3
     conn.close()
 

@@ -2,6 +2,7 @@ import json
 import re
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 
 # 画像読み取り（8bit）の自己チェックが出す「結果画面を撮れていない回がある」という知らせ
 # （app/ocr/kuijin_ocr.py の check_sequence）。kind='ocr' として保存されるが、同じ欠番は取込のときにも
@@ -71,6 +72,8 @@ class BatchErrors:
     skipped: list[tuple[int, int | None]] = field(default_factory=list)
     # 飛ばされている練成の前後の画像 {練成回数: (前の画像のファイル名, 後の画像のファイル名)}（画像読み取りのバッチだけ）
     skipped_between: dict[int, tuple[str, str]] = field(default_factory=dict)
+    # 取り込んだ画像のフォルダ（画像読み取りのバッチだけ。分からなければ None）
+    image_dir: str | None = None
     # 画像読み取り（8bit）で読めない値があり、取り込めなかった画像 [(練成回数 or None, ゼニー or None, 画像のパス), ...]
     unread: list[tuple[int | None, int | None, str]] = field(default_factory=list)
     # 画像読み取り（8bit）の自己チェックで見つかった矛盾の内容
@@ -96,6 +99,8 @@ def fetch_batch_errors(conn: sqlite3.Connection, batch_id: int) -> BatchErrors:
     ).fetchall()
 
     errors = BatchErrors()
+    row = conn.execute("SELECT image_dir FROM import_batches WHERE id = ?", (batch_id,)).fetchone()
+    errors.image_dir = row[0] if row else None
     gaps: list[tuple[int, int, str, str]] = []   # 欠番の知らせ（前のゼニー, 後のゼニー, 前の画像, 後の画像）
     for kind, line_number, zeny_count, detail in rows:
         if kind == "unparsable":
@@ -115,6 +120,9 @@ def fetch_batch_errors(conn: sqlite3.Connection, batch_id: int) -> BatchErrors:
         elif kind == "spec":
             errors.spec.append(detail or "")
     errors.skipped.sort()
+    if errors.image_dir is None and errors.unread:
+        # フォルダを保存していなかった頃のバッチ: 読めなかった画像があれば、その場所から分かる
+        errors.image_dir = str(Path(errors.unread[0][2]).parent)
     # 欠番のゼニーは、前後の画像のゼニーの間にある
     for count, zeny in errors.skipped:
         between = next(((b, a) for bz, az, b, a in gaps if zeny is not None and az < zeny < bz), None)

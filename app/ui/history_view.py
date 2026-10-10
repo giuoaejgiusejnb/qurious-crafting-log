@@ -73,6 +73,15 @@ def build_history_view(
                     where += f"（回数{zeny_count}）"
                 unparsable_controls.append(ft.Text(f"・{where}: {reason}", selectable=True))
 
+        def image_link(image_dir: str, name: str) -> ft.Control:
+            from app.ui.unread_viewer import open_in_explorer
+
+            return ft.TextButton(
+                content=ft.Text(name, size=12),
+                tooltip="エクスプローラーで画像の場所を開く",
+                on_click=lambda e: open_in_explorer(str(Path(image_dir) / name)),
+            )
+
         skipped_controls: list[ft.Control] = []
         if not errors.skipped:
             skipped_controls.append(ft.Text("なし", italic=True))
@@ -83,11 +92,28 @@ def build_history_view(
                     ft.Text(f"練成回数：{count}　　ゼニー：{zeny_disp}", selectable=True)
                 )
                 if count in errors.skipped_between:
-                    # 画像読み取りのバッチ: どの画像の間で撮れていないか
+                    # 画像読み取りのバッチ: どの画像の間で撮れていないか。画像のフォルダが分かれば、
+                    # ファイル名を押すとエクスプローラーでその画像の場所を開く
                     before, after = errors.skipped_between[count]
-                    skipped_controls.append(
-                        ft.Text(f"　　前後の画像：{before} → {after}", size=12, color=ft.Colors.GREY_700, selectable=True)
-                    )
+                    if errors.image_dir is None:
+                        skipped_controls.append(
+                            ft.Text(f"　　前後の画像：{before} → {after}", size=12, color=ft.Colors.GREY_700,
+                                    selectable=True)
+                        )
+                    else:
+                        skipped_controls.append(
+                            ft.Row(
+                                [
+                                    ft.Text("　　前後の画像：", size=12, color=ft.Colors.GREY_700),
+                                    image_link(errors.image_dir, before),
+                                    ft.Text("→", size=12, color=ft.Colors.GREY_700),
+                                    image_link(errors.image_dir, after),
+                                ],
+                                spacing=2,
+                                wrap=True,
+                                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                            )
+                        )
 
         def open_unread_viewer(e: ft.Event[ft.Button]) -> None:
             from app.ui.unread_viewer import show_unread_viewer
@@ -126,7 +152,7 @@ def build_history_view(
                 ft.Text("読み込みできなかった行", weight=ft.FontWeight.BOLD),
                 *unparsable_controls,
                 ft.Divider(),
-                ft.Text("飛ばされている練成", weight=ft.FontWeight.BOLD),
+                ft.Text(f"飛ばされている練成（{len(errors.skipped)}件）", weight=ft.FontWeight.BOLD),
                 *skipped_controls,
                 *ocr_controls,
             ],

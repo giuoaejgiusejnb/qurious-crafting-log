@@ -136,6 +136,7 @@ def import_block(
     ocr_issues: list[str] | None = None,
     spec_issues: list[str] | None = None,
     unread_images: dict[int, tuple[str, int | None]] | None = None,
+    image_dir: str | None = None,
 ) -> ImportSummary:
     """result_logのテキストブロックをパースし、1つの取込バッチとしてDBに保存する。
 
@@ -149,6 +150,7 @@ def import_block(
     unread_imagesは画像読み取りで読めない値があった行 {textの行番号（1始まり）: (画像のパス, ゼニー or None)}。
     その行のパースエラーは kind='unparsable' ではなく kind='unread' として保存し、履歴タブで画像を見てもらう
     （detail は {"path": 画像のパス, "zeny": ゼニー} の JSON）。
+    image_dirは画像読み取りで取り込んだ画像のフォルダ（履歴タブから画像の場所を開くために保存する）。
     """
     parsed, errors = parse_result_log_block(text)
     results, dropped_duplicate_count = _dedupe_consecutive_duplicates(parsed)
@@ -166,9 +168,9 @@ def import_block(
 
     imported_at = dt.datetime.now().isoformat(timespec="seconds")
     cur = conn.execute(
-        "INSERT INTO import_batches (imported_at, label, row_count, errors_analyzed, source) "
-        "VALUES (?, ?, ?, 1, ?)",
-        (imported_at, label, len(results), source),
+        "INSERT INTO import_batches (imported_at, label, row_count, errors_analyzed, source, image_dir) "
+        "VALUES (?, ?, ?, 1, ?, ?)",
+        (imported_at, label, len(results), source, image_dir),
     )
     batch_id = cur.lastrowid
     assert batch_id is not None  # INSERT直後なので必ず採番されている

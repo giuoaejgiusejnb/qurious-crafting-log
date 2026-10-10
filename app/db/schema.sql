@@ -9,7 +9,8 @@ CREATE TABLE IF NOT EXISTS import_batches (
     label           TEXT,
     row_count       INTEGER NOT NULL,
     errors_analyzed INTEGER NOT NULL DEFAULT 0,  -- エラー検出を実施したか。機能追加前のバッチは0
-    source          TEXT NOT NULL DEFAULT 'nx'   -- 取込元。'nx'=NX Macro Controllerのテキスト, '8bit'=練成画像の読み取り
+    source          TEXT NOT NULL DEFAULT 'nx',  -- 取込元。'nx'=NX Macro Controllerのテキスト, '8bit'=練成画像の読み取り
+    image_dir       TEXT                         -- 8bit: 取り込んだ画像のフォルダ（エラー欄から画像の場所を開くため）
 );
 
 -- 取込時に検出した問題行。履歴タブの「エラー」欄で参照する。

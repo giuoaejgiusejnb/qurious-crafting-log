@@ -39,6 +39,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 取込元（nx / 8bit）。画像読み取りの追加前のバッチはすべてNX Macro Controllerのテキスト
     if "source" not in batch_columns:
         conn.execute("ALTER TABLE import_batches ADD COLUMN source TEXT NOT NULL DEFAULT 'nx'")
+    # 画像読み取り（8bit）で取り込んだ画像のフォルダ。この列の追加前のバッチと、テキストの取込は NULL
+    if "image_dir" not in batch_columns:
+        conn.execute("ALTER TABLE import_batches ADD COLUMN image_dir TEXT")
 
     conn.commit()
 

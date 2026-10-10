@@ -100,6 +100,7 @@ def finish_image_import(
         ocr_issues=run.report.errors,
         spec_issues=run.report.spec_errors,
         unread_images={line: (by_name[name], zeny) for line, _, zeny, name in run.report.unread},
+        image_dir=str(Path(session.paths[0]).resolve().parent) if session.paths else None,
     )
     return ImageImportResult(len(session.paths), run, summary)
 
