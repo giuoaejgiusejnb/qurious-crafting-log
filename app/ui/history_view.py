@@ -86,8 +86,9 @@ def build_history_view(
         def open_unread_viewer(e: ft.Event[ft.Button]) -> None:
             from app.ui.unread_viewer import show_unread_viewer
 
-            page.pop_dialog()   # エラーの一覧を閉じてから、画像を 1 枚ずつ見るダイアログを開く
-            show_unread_viewer(page, errors.unread, batch_id)
+            # エラーの一覧を閉じてから、画像を 1 枚ずつ見るダイアログを開く。画像を閉じたら、エラーの一覧に戻る
+            page.pop_dialog()
+            show_unread_viewer(page, errors.unread, batch_id, on_close=lambda: show_error_dialog(batch_id))
 
         ocr_controls: list[ft.Control] = []
         if errors.unread:
