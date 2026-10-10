@@ -99,7 +99,7 @@ def finish_image_import(
         source=SOURCE_8BIT,
         ocr_issues=run.report.errors,
         spec_issues=run.report.spec_errors,
-        unread_images={line: by_name[name] for line, _, name in run.report.unread},
+        unread_images={line: (by_name[name], zeny) for line, _, zeny, name in run.report.unread},
     )
     return ImageImportResult(len(session.paths), run, summary)
 

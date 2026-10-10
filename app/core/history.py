@@ -1,3 +1,4 @@
+import json
 import sqlite3
 from dataclasses import dataclass, field
 
@@ -47,8 +48,8 @@ class BatchErrors:
     unparsable: list[tuple[int, int | None, str]] = field(default_factory=list)
     # 飛ばされている練成 [(練成回数, 推定ゼニー or None), ...]（練成回数の昇順）
     skipped: list[tuple[int, int | None]] = field(default_factory=list)
-    # 画像読み取り（8bit）で読めない値があり、取り込めなかった画像 [(練成回数 or None, 画像のパス), ...]
-    unread: list[tuple[int | None, str]] = field(default_factory=list)
+    # 画像読み取り（8bit）で読めない値があり、取り込めなかった画像 [(練成回数 or None, ゼニー or None, 画像のパス), ...]
+    unread: list[tuple[int | None, int | None, str]] = field(default_factory=list)
     # 画像読み取り（8bit）の自己チェックで見つかった矛盾の内容
     ocr: list[str] = field(default_factory=list)
     # 画像読み取り（8bit）の結果が抽選の仕様で作れないもの（読み間違いの疑い）の内容
@@ -79,7 +80,8 @@ def fetch_batch_errors(conn: sqlite3.Connection, batch_id: int) -> BatchErrors:
             zeny = int(detail) if detail is not None else None
             errors.skipped.append((zeny_count, zeny))
         elif kind == "unread":
-            errors.unread.append((zeny_count, detail or ""))
+            info = json.loads(detail or "{}")
+            errors.unread.append((zeny_count, info.get("zeny"), info.get("path", "")))
         elif kind == "ocr":
             errors.ocr.append(detail or "")
         elif kind == "spec":

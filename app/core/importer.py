@@ -1,4 +1,5 @@
 import datetime as dt
+import json
 import sqlite3
 from dataclasses import dataclass, field
 from typing import Callable
@@ -133,7 +134,7 @@ def import_block(
     source: str = SOURCE_NX,
     ocr_issues: list[str] | None = None,
     spec_issues: list[str] | None = None,
-    unread_images: dict[int, str] | None = None,
+    unread_images: dict[int, tuple[str, int | None]] | None = None,
 ) -> ImportSummary:
     """result_logのテキストブロックをパースし、1つの取込バッチとしてDBに保存する。
 
@@ -144,9 +145,9 @@ def import_block(
     sourceは取込元（SOURCE_NX / SOURCE_8BIT）。ocr_issuesは画像読み取りの自己チェックで
     見つかった矛盾（kind='ocr'）、spec_issuesは抽選の仕様で作れない結果（kind='spec'）で、
     同じく import_issues に保存する。
-    unread_imagesは画像読み取りで読めない値があった行 {textの行番号（1始まり）: 画像のパス}。
-    その行のパースエラーは kind='unparsable' ではなく kind='unread'（detail は画像のパス）として保存し、
-    履歴タブで画像を見てもらう。
+    unread_imagesは画像読み取りで読めない値があった行 {textの行番号（1始まり）: (画像のパス, ゼニー or None)}。
+    その行のパースエラーは kind='unparsable' ではなく kind='unread' として保存し、履歴タブで画像を見てもらう
+    （detail は {"path": 画像のパス, "zeny": ゼニー} の JSON）。
     """
     parsed, errors = parse_result_log_block(text)
     results, dropped_duplicate_count = _dedupe_consecutive_duplicates(parsed)
@@ -178,7 +179,9 @@ def import_block(
             VALUES (?, ?, ?, ?, ?)
             """,
             [
-                (batch_id, "unread", line_number, _extract_zeny_count_from_message(message), unread_images[line_number])
+                (batch_id, "unread", line_number, _extract_zeny_count_from_message(message),
+                 json.dumps({"path": unread_images[line_number][0], "zeny": unread_images[line_number][1]},
+                            ensure_ascii=False))
                 if unread_images and line_number in unread_images
                 else (batch_id, "unparsable", line_number, _extract_zeny_count_from_message(message), message)
                 for line_number, message in errors

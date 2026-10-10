@@ -68,16 +68,39 @@ def test_unread_rows_are_saved_with_their_images(tmp_path):
     lost = _values("?")   # 所持ゼニーが読めないと、何回目か分からない
     report = build_report([_record("a.jpg", _values("100")), _record("b.jpg", _values("96")),
                            _record("c.jpg", unreadable), _record("d.jpg", lost)], 4, tmp_path)
-    assert report.unread == [(5, 3, "c.jpg"), (6, None, "d.jpg")]
+    assert report.unread == [(5, 3, 92, "c.jpg"), (6, None, None, "d.jpg")]
 
     conn = get_connection(tmp_path / "test.db")
     summary = import_block(conn, report.text, "ギルパレ脚", source=SOURCE_8BIT,
-                           unread_images={line: f"D:/shots/{name}" for line, _, name in report.unread})
+                           unread_images={line: (f"D:/shots/{name}", zeny) for line, _, zeny, name in report.unread})
     assert (summary.imported_count, summary.unread_count, len(summary.errors)) == (2, 2, 2)
     errors = fetch_batch_errors(conn, summary.batch_id)
-    assert errors.unread == [(3, "D:/shots/c.jpg"), (None, "D:/shots/d.jpg")]
+    assert errors.unread == [(3, 92, "D:/shots/c.jpg"), (None, None, "D:/shots/d.jpg")]
     assert errors.unparsable == [] and errors.total == list_batches(conn)[0].error_count == 2
     conn.close()
+
+
+def test_drop_detached_removes_sparks_away_from_the_value():
+    """右寄せの数値の欄で、値の文字から離れた成分（耐性「+4」の火花など）を消す。"""
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import VALUE_H, VALUE_W, drop_detached
+
+    def ink(*boxes: tuple[int, int, int, int]) -> np.ndarray:
+        out = np.zeros((VALUE_H, VALUE_W), dtype=bool)
+        for x, y, w, h in boxes:
+            out[y:y + h, x:x + w] = True
+        return out
+
+    minus, spark = (61, 10, 5, 2), (22, 4, 5, 7)   # 灰色の "-"（右端）と、左に離れた火花
+    assert (drop_detached(ink(minus, spark)) == ink(minus)).all()
+    plus, digit = (48, 6, 7, 8), (57, 3, 8, 13)    # "+4" のような、右端の文字の並び（すき間 2 画素）
+    assert (drop_detached(ink(plus, digit, spark)) == ink(plus, digit)).all()
+    assert (drop_detached(ink(plus, digit, (41, 8, 4, 7))) == ink(plus, digit, (41, 8, 4, 7))).all()   # 近い成分は残す
+    # 右端に届く成分が無ければ、値の文字は写っていない（"-" が二値化で消えた）ので、すべて消す
+    assert not drop_detached(ink(spark)).any()
+    # 符号が消えて数字だけ残ったものは消さない（読めない値として残す）
+    assert (drop_detached(ink(digit)) == ink(digit)).all()
 
 
 def test_app_reads_with_bundled_templates_only(tmp_path):

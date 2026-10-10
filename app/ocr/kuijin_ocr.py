@@ -102,6 +102,7 @@ class Region:
     channel: str      # "min": 白文字用 / "max": 色付き文字用 / "gb": 灰色・緑のアイコン用（赤い演出光を無視）
     contrast: float   # 背景との差がこれ以上なら文字とみなす。1 未満なら「最も明るい画素と背景の差」に対する割合
     min_component: int = 3    # これ未満の画素数の点はノイズ（JPEG ノイズ・演出のきらめき）として捨てる
+    right_aligned: bool = False   # 右寄せの数値の欄。値の文字から離れた成分を捨てる（drop_detached）
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -120,8 +121,44 @@ class Region:
         thr = self.contrast if self.contrast >= 1 else max(self.contrast * diff.max(), MIN_CONTRAST)
         return diff > thr
 
+    def ink(self, img: np.ndarray, dy: int = 0) -> np.ndarray:
+        """二値化し、右寄せの数値の欄では値の一部でない成分を捨てる（位置はそろえない）。"""
+        ink = self.threshold(img, dy)
+        return drop_detached(ink) if self.right_aligned else ink
+
     def binarize(self, img: np.ndarray, dy: int = 0) -> np.ndarray:
-        return align(self.threshold(img, dy), self.min_component)
+        return align(self.ink(img, dy), self.min_component)
+
+
+# 右寄せの数値の欄（幅 72）で、値の文字の右端は 63〜66 画素目に必ずある（別のユーザーの 1,850 枚で確認。
+# 文字の右に光の粒があるときも 71 画素目まで）。文字どうしのすき間は 5 画素以下。
+VALUE_ANCHOR_X = 60   # 右端がこれより右にある成分から、値の文字をたどり始める
+DETACHED_GAP = 10     # 右にある文字との間がこれ以上空いている成分は、値の一部ではない
+
+
+def drop_detached(ink: np.ndarray) -> np.ndarray:
+    """右寄せの数値の欄の二値画像から、値の文字とつながらない成分（演出の光・火花）を消す。
+
+    値の一部になりうる成分（数字・"+" の高さがあるものか、横長の "-" の形）を右端からたどり、右にある成分との間が
+    DETACHED_GAP 以上空いたら、そこから左はすべて消す。右端（VALUE_ANCHOR_X より右）に届く成分が無ければ、
+    値の文字は写っていない（灰色の "-" が、近くの明るい光のせいで二値化で消えた）ので、すべて消す
+    （何も無ければ read_number は "-" と読む）。
+    耐性が「+4」のとき、その値のまわりに出る赤い火花が 1 つ上の行の欄にかかり、読めない値になっていた。
+    """
+    n, _, stats, _ = cv2.connectedComponentsWithStats(ink.astype(np.uint8), connectivity=8)
+    spans = sorted(((int(x), int(x + w)) for x, _, w, h, _ in stats[1:] if h > 5 or (h <= 4 and w >= max(3, 2 * h))),
+                   key=lambda span: -span[1])
+    left: int | None = None
+    for x0, x1 in spans:
+        if left is None:
+            if x1 <= VALUE_ANCHOR_X:
+                break
+        elif left - x1 >= DETACHED_GAP:
+            break
+        left = x0 if left is None else min(left, x0)
+    out = ink.copy()
+    out[:, : ink.shape[1] if left is None else max(left - DETACHED_GAP, 0)] = False
+    return out
 
 
 def _keep_components(ink: np.ndarray, min_component: int) -> np.ndarray:
@@ -154,7 +191,7 @@ def locate_glyph(img: np.ndarray, region: Region, dy: int, glyph: np.ndarray) ->
 
     ラベル入力の確認画像で、どの文字を切り取ったかを枠で示すために使う（読み取りには使わない）。
     """
-    ink = region.threshold(img, dy)
+    ink = region.ink(img, dy)
     oy, ox = align_offset(ink, region.min_component)
     bits = align(ink, region.min_component)
     n, labels, stats, _ = cv2.connectedComponentsWithStats(bits.astype(np.uint8), connectivity=8)
@@ -193,7 +230,7 @@ RESIST_Y = [207, 231, 256, 281, 303]
 def value_region(y: int) -> Region:
     # 数値は色付き（緑・赤）と灰色（変化なしの "-"）があり、きらめき（薄いピンク）が重なることがある。
     # 最も明るい画素に対する割合で二値化すると、きらめきが消え、符号と数字の間のすき間も残る。
-    return Region(690, y, 690 + VALUE_W, y + VALUE_H, "max", 0.6, min_component=3)
+    return Region(690, y, 690 + VALUE_W, y + VALUE_H, "max", 0.6, min_component=3, right_aligned=True)
 
 
 # 画面の種類。上から順に判定するので、見本が他の画面にも一致しうるもの（screen1 の見出しは
@@ -754,8 +791,9 @@ class Report:
     line_count: int
     duplicate_count: int   # 同じ回の重複として除いた枚数
     spec_errors: list[str] = field(default_factory=list)   # 抽選の仕様で作れない結果（読み間違いの疑い）
-    # 読めない値（"?"）があって取り込めない行: (text の行番号〔1 始まり〕, 回数〔分からなければ None〕, 画像のファイル名)
-    unread: list[tuple[int, int | None, str]] = field(default_factory=list)
+    # 読めない値（"?"）があって取り込めない行:
+    # (text の行番号〔1 始まり〕, 回数〔分からなければ None〕, ゼニー〔千単位。読めなければ None〕, 画像のファイル名)
+    unread: list[tuple[int, int | None, int | None, str]] = field(default_factory=list)
 
 
 def build_report(records: list, step_k: int, template_dir: Path,
@@ -813,7 +851,7 @@ def build_report(records: list, step_k: int, template_dir: Path,
     errors = warnings + check_sequence(rows, step_k) + check_consistency(records, template_dir, minus_skills)
     spec_errors = check_spec(lines, kept, table, minus_skills) if table is not None else []
     # text の先頭 2 行は初期ゼニーと見出しなので、lines の i 番目は i + 3 行目
-    unread = [(i + 3, None if c == "?" else int(c), kept[i][0])
+    unread = [(i + 3, None if c == "?" else int(c), None if "?" in z else int(z), kept[i][0])
               for i, (c, z, b) in enumerate(lines) if "?" in c + z + "".join(b)]
     return Report(text, errors, len(lines), dup, spec_errors, unread)
 

@@ -87,8 +87,8 @@ def build_import_view(
     """
     progress_bar = ft.ProgressBar(width=400, value=0, visible=False)
     status_text = ft.Text()
-    # 画像取込で読めなかった画像 [(練成回数 or None, 画像のパス)] と、そのバッチ。取込のたびに入れ替える
-    unread_items: list[tuple[int | None, str]] = []
+    # 画像取込で読めなかった画像 [(練成回数 or None, ゼニー or None, 画像のパス)] と、そのバッチ。取込のたびに入れ替える
+    unread_items: list[tuple[int | None, int | None, str]] = []
     unread_batch: list[int | None] = [None]
 
     def on_show_unread(e: ft.Event[ft.Button]) -> None:
@@ -580,10 +580,10 @@ def build_import_view(
 
         run = result.run
         extra = [f"読み取りの矛盾 {len(run.report.errors)}件", f"仕様違反 {len(run.report.spec_errors)}件"]
-        finish_import(result.summary, label, extra, frozenset(line for line, _, _ in run.report.unread))
+        finish_import(result.summary, label, extra, frozenset(line for line, _, _, _ in run.report.unread))
         # 読めない値があった行は取り込んでいない。何回目の練成かと画像を、ボタンから見てもらう
         by_name = {Path(path).name: path for path in session.paths}
-        unread_items[:] = [(count, by_name[name]) for _, count, name in run.report.unread]
+        unread_items[:] = [(count, zeny, by_name[name]) for _, count, zeny, name in run.report.unread]
         unread_batch[0] = result.summary.batch_id
         if unread_items:
             unread_button.content = f"読めなかった画像 {len(unread_items)}枚 を見る"
