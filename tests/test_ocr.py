@@ -117,6 +117,14 @@ def test_name_loose_match_needs_icon_and_bar(tmp_path):
     assert names.match(thin) == count   # アイコンの色などを渡さなければ、今までどおり
 
 
+def test_checked_number_marks_malformed_values():
+    """数値の形でない読み取り（文字のラベルの選び間違いなど）は、取込を止めずに読めない値にする。"""
+    from app.ocr.kuijin_ocr import checked_number
+
+    assert [checked_number(v) for v in ("-", "+24", "-3", "+?")] == ["-", "+24", "-3", "+?"]
+    assert [checked_number(v) for v in ("+1+", "12", "+", "-+2")] == ["+1+?", "12?", "+?", "-+2?"]
+
+
 def test_label_choices():
     from app.ocr.kuijin_ocr import label_choices
 

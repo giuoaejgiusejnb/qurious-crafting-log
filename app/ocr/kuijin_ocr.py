@@ -39,6 +39,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import time
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
@@ -596,7 +597,18 @@ def read_number(bits: np.ndarray, glyphs: TemplateBank, source: tuple[str, str] 
     # 2 つ続くことは無いので 1 つにまとめる
     while "--" in text:
         text = text.replace("--", "-")
-    return text or "-"
+    return checked_number(text or "-")
+
+
+def checked_number(text: str) -> str:
+    """読んだ数値が "-"（変化なし）か、符号と数字の形（"+24" "-3"）でなければ、読めない値の印 "?" を付けて返す。
+
+    文字のラベルの選び間違い（演出の粒に "+" を付けたなど）や、文字が切れて 2 つに分かれたときに "+1+" の
+    ような値になる。そのまま数値として扱うと取込全体がエラーで止まるので、その行だけを読めない行にする。
+    """
+    if "?" in text or re.fullmatch(r"-|[+-][0-9]+", text):
+        return text
+    return text + "?"
 
 
 def read_money(glyphs: TemplateBank, ids: list[int]) -> str:
