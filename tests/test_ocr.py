@@ -138,29 +138,38 @@ def test_drop_detached_removes_sparks_away_from_the_value():
     assert (drop_detached(ink(digit)) == ink(digit)).all()
 
 
-def test_slot_loose_match_and_left_margin():
-    """スロット欄は、今の基準で当たらなくても、いちばん近い見本が十分近くてほかのラベルが遠ければ、その見本とみなす。
+def test_matching_is_not_loosened():
+    """見本との違いが基準を超えたら、近い見本があっても当てない（読めないものは取り込まずに見てもらう）。
 
-    レア演出の赤い背景や光の粒で、絵の線が少し変わるため。絵より左にある光の粒は、位置合わせの前に消す。
+    スキル名とスロット欄でゆるい基準を試したが、取り違えの余地を否定できず、やめた。
     """
     import numpy as np
 
-    from app.ocr.kuijin_ocr import Region, TemplateBank
+    from app.ocr.kuijin_ocr import TemplateBank
 
     slots = TemplateBank(BUNDLED_TEMPLATE_DIR, "1280x720", "slot", "_base3")
     count, index = len(slots.labels), slots.labels.index("+3")
+    assert slots.match(slots.bits[index].copy()) == index
     thin = slots.bits[index].copy()
-    thin[np.flatnonzero(thin)[::5]] = False       # 全体の違い 0.2（今の基準は 0.15 未満）
-    hit = slots.match(thin)
-    assert slots.labels[hit] == "+3" and len(slots.labels) == count and slots.loose_matches == 1
-    broken = slots.bits[index].copy()
-    broken[np.flatnonzero(broken)[::2]] = False   # 全体の違い 0.5 → 新しい見本
-    assert slots.match(broken) == count
+    thin[np.flatnonzero(thin)[::5]] = False   # 全体の違い 0.2（基準は 0.15 未満）
+    assert slots.match(thin) == count and slots.labels[count] is None
 
-    img = np.zeros((10, 20, 3), dtype=np.uint8)
-    img[4, 2] = img[4, 10] = (200, 200, 200)      # 2 列目は絵より左（光の粒）、10 列目は絵
-    ink = Region(0, 0, 20, 10, "gb", 50, x_min=5).ink(img)
-    assert not ink[4, 2] and ink[4, 10]
+
+def test_docked_captures_are_rejected_in_the_app():
+    """ドックに入れて撮った画像（見出しの見本との違いが大きい）のバッチは、アプリでは取り込まない。"""
+    from app.ocr.kuijin_ocr import DOCK_SIGNATURE_DISTANCE, DockedCaptureError, check_handheld
+
+    def shots(distance: float, n: int) -> list[dict]:
+        return [{"screen": "screen1", "signature_distance": distance}] * n
+
+    handheld, docked = shots(0.01, 10), shots(0.065, 10)
+    assert 0.01 < DOCK_SIGNATURE_DISTANCE < 0.065
+    check_handheld([*handheld, None, {"screen": None, "signature_distance": None}])   # 読めない画像・結果画面以外は数えない
+    check_handheld([*handheld, *docked[:3]])     # 少し混ざっているだけなら止めない
+    check_handheld([])
+    with pytest.raises(DockedCaptureError) as exc_info:
+        check_handheld([*docked, *handheld[:2]])
+    assert (exc_info.value.docked, exc_info.value.total) == (10, 12)
 
 
 def test_app_reads_with_bundled_templates_only(tmp_path):
@@ -206,38 +215,6 @@ def test_template_bank_is_unlabeled(tmp_path):
     glyphs = TemplateBank(tmp_path, "1280x720", "glyph")
     glyphs.labels = ["1", "", None]   # "" はノイズとしてラベル付け済み
     assert [glyphs.is_unlabeled(i) for i in range(3)] == [False, False, True]
-
-
-def test_name_loose_match_needs_icon_and_bar(tmp_path):
-    """スキル名が今の基準で当たらないとき、アイコンの色と四角の数が合う見本にだけ、ゆるい基準で当てる。
-
-    ドックに入れて撮った画像（TV モード）は文字の描かれ方が少し違い、携帯モードで作った見本に当たらない。
-    """
-    import json
-
-    import numpy as np
-
-    from app.ocr.kuijin_ocr import SKILL_PROPS_FILE, TemplateBank
-
-    templates = _copy_templates(tmp_path / "templates")
-    props = json.loads((templates / SKILL_PROPS_FILE).read_text(encoding="utf-8"))
-    names = TemplateBank(templates, "1280x720", "name")
-    count = len(names.labels)
-    skill = "雷属性攻撃強化"
-    thin = names.bits[names.labels.index(skill)].copy()
-    thin[np.flatnonzero(thin)[::12]] = False   # 線が少し細い（違いは約 8%。今の基準は 3% 未満）
-
-    def features(of: str, bar: str = "Ggggg") -> dict:
-        return {"icon": ":".join(str(v) for v in props[of]["icon"]), "bar": bar, "color": "green"}
-
-    hit = names.match(thin, None, features(skill))
-    assert names.labels[hit] == skill and len(names.labels) == count and names.loose_matches == 1
-    # 四角の数（最大レベル）やアイコンの色が合わなければ当てず、新しい見本にする（ラベル入力になる）
-    assert names.match(thin, None, features(skill, bar="Ggg")) == count
-    names = TemplateBank(templates, "1280x720", "name")
-    assert names.match(thin, None, features("攻撃")) == count
-    names = TemplateBank(templates, "1280x720", "name")
-    assert names.match(thin) == count   # アイコンの色などを渡さなければ、今までどおり
 
 
 def test_checked_number_marks_malformed_values():

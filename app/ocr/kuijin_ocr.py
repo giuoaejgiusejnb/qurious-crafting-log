@@ -80,21 +80,12 @@ MATCH_THRESHOLD = {"default": (0.15, 0.2),
                    "name": (0.03, 0.15),
                    "glyph": (0.15, 1.0),   # 1 文字ずつなので全体の IoU だけ
                    "money_glyph": (0.15, 1.0)}
-# スキル名が上の基準でどの見本にも当たらなかったときの、ゆるい基準。アイコンの色と四角の数（最大レベル）が
-# そのスキルと合う見本だけを相手にする（TemplateBank.match）。ドックに入れて撮った画像（TV モード）は、
-# 携帯モードで作った見本と文字の描かれ方が少し違い、上の基準ではほとんどが新しい見本になる。
-# 文字の形だけでゆるめると「雷」と「龍」、「水」と「氷」を取り違えるが、この組はアイコンの色が違う
-# （経緯と数値は docs/ocr_render_difference.md）
-NAME_LOOSE_THRESHOLD = (0.20, 0.25)
-# スロット欄が上の基準でどの見本にも当たらなかったときの、ゆるい基準（TemplateBank._loose_slot_match）。
-# いちばん近い見本との全体の違いが SLOT_LOOSE_WHOLE 未満で、ラベルの違う見本がそれより SLOT_LOOSE_MARGIN 以上
-# 遠いときに、その見本とみなす（区画の違いは見ない）。レア演出の赤い背景や光の粒で、絵の線が少し変わるため。
-# 同梱の見本では、ラベルの違う見本同士の全体の違いは 0.39 以上（スロット 1 つ分の絵が違うと、それだけ変わる）、
-# 同じラベルのいちばん近い見本との違いは多くが 0.25 未満。見本を 1 つ抜いて当て直しても取り違えは 0
-SLOT_LOOSE_WHOLE = 0.25
-SLOT_LOOSE_MARGIN = 0.10
 BLOCK_W = 16
 SIGNATURE_THRESHOLD = 0.3
+# ドックに入れて撮った画像（TV モード。テレビに繋がなくても同じ）の見分け方。見出し「傀異強化結果」の見本との違いは、
+# 携帯モードで 0.00〜0.01（開発者と別のユーザーの 7 バッチ）、ドックで 0.06〜0.07（開発者の 1 バッチ）。
+# ドックでは文字の描かれ方が少し違い、携帯モードで作った見本にスキル名のほとんどが当たらない
+DOCK_SIGNATURE_DISTANCE = 0.03
 MIN_INK = 40              # スキル名行の画素数がこれ未満ならスキル無し
 MIN_CONTRAST = 30         # 割合で決めるしきい値の下限（何も書かれていない欄でノイズを拾わないため）
 DIGIT_SHAPE = (20, 14)    # 数値の 1 文字（符号・数字）の切り出しサイズ
@@ -110,7 +101,6 @@ class Region:
     contrast: float   # 背景との差がこれ以上なら文字とみなす。1 未満なら「最も明るい画素と背景の差」に対する割合
     min_component: int = 3    # これ未満の画素数の点はノイズ（JPEG ノイズ・演出のきらめき）として捨てる
     right_aligned: bool = False   # 右寄せの数値の欄。値の文字から離れた成分を捨てる（drop_detached）
-    x_min: int = 0            # これより左の列は使わない（絵が始まる位置より左にあるのは演出の光の粒）
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -132,7 +122,6 @@ class Region:
     def ink(self, img: np.ndarray, dy: int = 0) -> np.ndarray:
         """二値化し、右寄せの数値の欄では値の一部でない成分を捨てる（位置はそろえない）。"""
         ink = self.threshold(img, dy)
-        ink[:, : self.x_min] = False
         return drop_detached(ink) if self.right_aligned else ink
 
     def binarize(self, img: np.ndarray, dy: int = 0) -> np.ndarray:
@@ -229,9 +218,7 @@ BAR_X0, BAR_PITCH, BAR_Y = 560, 16, 403
 MAX_LEVEL = 8
 ICON_X0, ICON_Y0, ICON_X1, ICON_Y1 = 521, 385, 539, 400   # スキル名の左のアイコン（1 行目）
 VALUE_W, VALUE_H = 72, 22
-# スロットの絵の左端は、欄の 15 列目（強化されたスロットは緑の縁の分だけ広く 13 列目）にいつもある
-# （4 バッチの約 1 万枚で確認）。それより左に光の粒があると、align の位置合わせがずれて見本に当たらなくなる
-SLOT = Region(660, 183, 762, 206, "gb", 50, x_min=12)
+SLOT = Region(660, 183, 762, 206, "gb", 50)
 SKILL_DY = [0, 51, 101]    # 2・3 行目のずれ（間隔は約 50.5 画素）
 MAX_SKILLS = len(SKILL_DY)
 RESIST_NAMES = ["fire", "water", "thunder", "ice", "dragon"]
@@ -387,11 +374,13 @@ def block_distance(bank: np.ndarray, bits: np.ndarray, shape: tuple[int, int]) -
     return np.where(union > 0, 1.0 - inter / np.maximum(union, 1), 0.0).max(axis=1)
 
 
-def detect_screen(img: np.ndarray) -> str | None:
+def detect_screen(img: np.ndarray) -> tuple[str, float] | None:
+    """結果画面の種類と、その画面判定の見本との違い（0 が完全一致）を返す。結果画面でなければ None。"""
     for layout, sig in _signatures.items():
         bits = LAYOUTS[layout]["signature"].binarize(img)
-        if iou_distance(sig.reshape(1, -1), bits.reshape(-1))[0] < SIGNATURE_THRESHOLD:
-            return layout
+        distance = float(iou_distance(sig.reshape(1, -1), bits.reshape(-1))[0])
+        if distance < SIGNATURE_THRESHOLD:
+            return layout, distance
     return None
 
 
@@ -401,8 +390,10 @@ def extract(path: str) -> dict | None:
     if loaded is None:
         return None
     img, device = loaded
-    screen = detect_screen(img)
-    out = {"device": device, "screen": screen, "crops": {}, "levels": {}, "money": [], "features": {}}
+    detected = detect_screen(img)
+    screen = detected[0] if detected else None
+    out = {"device": device, "screen": screen, "signature_distance": detected[1] if detected else None,
+           "crops": {}, "levels": {}, "money": [], "features": {}}
     if screen is None:
         return out
     base = LAYOUTS[screen]["dy"]
@@ -526,8 +517,6 @@ class TemplateBank:
             self.sources = [None] * len(self.labels)
         self.new_from = len(self.labels)
         self.cache: dict[bytes, int] = {}
-        self.loose_matches = 0   # ゆるい基準（NAME_LOOSE_THRESHOLD）で見本に当てた切り出しの種類の数
-        self._props: dict | None = None
 
     @property
     def name(self) -> str:
@@ -541,19 +530,18 @@ class TemplateBank:
             return True
         return self.kind in ("name", "slot") and "?" in label
 
-    def match(self, bits: np.ndarray, source: tuple[str, str] | None = None,
-              features: dict[str, str] | None = None) -> int:
+    def match(self, bits: np.ndarray, source: tuple[str, str] | None = None) -> int:
         """一致するテンプレート番号を返す。無ければ新規登録する。
 
-        features（skill_features の結果）を渡すと、スキル名がどの見本にも当たらなかったときに
-        ゆるい基準でもう一度探す（_loose_match）。
+        基準（MATCH_THRESHOLD）をゆるめて近い見本に当てることはしない。スキル名とスロット欄でゆるい基準を
+        試したが、見本に無い形が来たときに違うラベルの見本に当たる余地を否定できず、やめた
+        （2026-10-11。docs/ocr_render_difference.md）。読めないものは、取り込まずに画像を見てもらう。
         """
         bits = bits.reshape(-1)
         if len(self.labels):
             whole, block = MATCH_THRESHOLD.get(self.kind, MATCH_THRESHOLD["default"])
-            whole_dist = iou_distance(self.bits, bits)
-            block_dist = block_distance(self.bits, bits, self.shape)
-            dist = np.where(block_dist < block, whole_dist, 1.0)
+            dist = iou_distance(self.bits, bits)
+            dist = np.where(block_distance(self.bits, bits, self.shape) < block, dist, 1.0)
             best = int(dist.argmin())
             if dist[best] < whole:
                 # 保存済みのテンプレートは元画像が分からないので、最初に当たった画像を覚えておく
@@ -561,52 +549,10 @@ class TemplateBank:
                 if self.sources[best] is None:
                     self.sources[best] = source
                 return best
-            loose = None
-            if self.kind == "name" and features:
-                loose = self._loose_match(whole_dist, block_dist, features)
-            elif self.kind == "slot":
-                loose = self._loose_slot_match(whole_dist)
-            if loose is not None:
-                self.loose_matches += 1
-                return loose
         self.bits = np.vstack([self.bits, bits])
         self.labels.append(None)
         self.sources.append(source)
         return len(self.labels) - 1
-
-    def _loose_match(self, whole_dist: np.ndarray, block_dist: np.ndarray, features: dict[str, str]) -> int | None:
-        """ゆるい基準で、アイコンの色と四角の数がスキルと合う見本のうち、いちばん近いものを返す。無ければ None。
-
-        相手にするのは、ラベルが確定していて、skill_props.json に確認済みの性質があるスキルの見本だけ。
-        """
-        if not features.get("icon"):
-            return None
-        if self._props is None:
-            path = self.template_dir / SKILL_PROPS_FILE
-            self._props = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        icon = np.array([int(x) for x in features["icon"].split(":")])
-        whole, block = NAME_LOOSE_THRESHOLD
-        for i in np.argsort(whole_dist):
-            if whole_dist[i] >= whole:
-                break
-            prop = None if self.is_unlabeled(int(i)) else self._props.get(self.labels[i])
-            if (block_dist[i] < block and prop and prop.get("icon") and "unverified" not in prop
-                    and len(features.get("bar", "")) == prop["max"]
-                    and np.linalg.norm(icon - np.array(prop["icon"])) <= ICON_TOLERANCE):
-                return int(i)
-        return None
-
-    def _loose_slot_match(self, whole_dist: np.ndarray) -> int | None:
-        """スロット欄のゆるい基準: いちばん近い見本が十分近く、ラベルの違う見本が十分遠ければ、その見本を返す。"""
-        labeled = np.array([not self.is_unlabeled(i) for i in range(len(self.labels))])
-        if not labeled.any():
-            return None
-        dist = np.where(labeled, whole_dist, 1.0)
-        best = int(dist.argmin())
-        other = np.array([labeled[i] and self.labels[i] != self.labels[best] for i in range(len(self.labels))])
-        if dist[best] < SLOT_LOOSE_WHOLE and (not other.any() or whole_dist[other].min() - dist[best] >= SLOT_LOOSE_MARGIN):
-            return best
-        return None
 
     def unpack(self, packed: np.ndarray) -> np.ndarray:
         return np.unpackbits(packed)[: self.bits.shape[1]].astype(bool)
@@ -1117,6 +1063,30 @@ def check_resolutions(paths: list[str], extracted: list[dict | None], template_d
         raise UnsupportedResolutionError(bad, supported)
 
 
+class DockedCaptureError(Exception):
+    """ドックに入れて撮った画像（TV モード）のバッチ。対応していないので、取込は行わない。"""
+
+    def __init__(self, docked: int, total: int) -> None:
+        self.docked, self.total = docked, total
+        super().__init__(
+            f"ドックに入れて撮った画像（TVモード）のようです（結果画面 {total} 枚のうち {docked} 枚）。"
+            "対応しているのは、携帯モードで撮った画像だけです。取込は行っていません"
+        )
+
+
+def check_handheld(extracted: list[dict | None]) -> None:
+    """結果画面の半分以上がドックで撮った画像なら DockedCaptureError にする（アプリの取込で使う）。
+
+    判定には「傀異強化結果」の見出しの画面（screen1）だけを使う（DOCK_SIGNATURE_DISTANCE はその見出しの値）。
+    ドックの画像は、スキル名のほとんどが見本に当たらず、読めない画像が何千枚も出る。見本との違いを大きく
+    許せば読めるが、取り違えの余地が残るので、対応しないことにした（2026-10-11）。
+    """
+    distances = [ex["signature_distance"] for ex in extracted if ex is not None and ex["screen"] == "screen1"]
+    docked = sum(d >= DOCK_SIGNATURE_DISTANCE for d in distances)
+    if distances and docked * 2 >= len(distances):
+        raise DockedCaptureError(docked, len(distances))
+
+
 @dataclass
 class OcrRun:
     report: Report
@@ -1358,8 +1328,11 @@ def start_reading(
     progress_callback: ProgressCallback | None = None,
     table: int | None = None,
     label_dir: Path | None = None,
+    handheld_only: bool = False,
 ) -> OcrSession:
     """画像を切り出して見本と照合する（結果はまだ作らない）。
+
+    handheld_only=True では、ドックに入れて撮った画像のバッチなら DockedCaptureError で止める（check_handheld）。
 
     label_dir を渡すと（アプリ）、template_dir の見本は読むだけで保存しない（OcrSession.bank）。
     use_processes=False ではスレッドで切り出す（exe 化したアプリではプロセスを起こせないことがあるため）。
@@ -1380,6 +1353,8 @@ def start_reading(
     t_extract = time.perf_counter() - start
     # 見本の無い解像度の画像は、照合すると見本がすべて新しくなってしまうので、照合の前に止める
     check_resolutions(paths, extracted, template_dir)
+    if handheld_only:
+        check_handheld(extracted)
 
     session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir, table, label_dir)
     for n, (path, ex) in enumerate(zip(paths, extracted), start=1):
@@ -1394,9 +1369,7 @@ def start_reading(
             b = session.bank(ex["device"], kind)
             key = packed.tobytes()   # 全く同じ切り出しは多いので、照合結果を使い回す
             if key not in b.cache:
-                # スキル名（fld は "skill1" など）には、その行のアイコンの色と四角の並びも渡す
-                features = ex["features"].get(int(fld[5:])) if kind == "name" else None
-                b.cache[key] = b.match(b.unpack(packed), (path, fld), features)
+                b.cache[key] = b.match(b.unpack(packed), (path, fld))
             ids[fld] = (b, b.cache[key])
         mb = session.bank(ex["device"], "money_glyph")
         ids["money"] = (mb, [mb.cache.setdefault(g.tobytes(), mb.match(mb.unpack(g), (path, "money")))

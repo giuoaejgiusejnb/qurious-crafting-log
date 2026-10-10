@@ -69,6 +69,7 @@ def start_image_reading(
         progress_callback=progress_callback,
         table=table,
         label_dir=data_dir / "ocr_templates",
+        handheld_only=True,
     )
 
 
