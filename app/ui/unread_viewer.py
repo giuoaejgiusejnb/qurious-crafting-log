@@ -7,6 +7,7 @@
 import os
 import subprocess
 from pathlib import Path
+from typing import Callable
 
 import flet as ft
 
@@ -22,9 +23,15 @@ def open_in_explorer(path: str) -> None:
 
 
 def show_unread_viewer(
-    page: ft.Page, items: list[tuple[int | None, int | None, str]], batch_id: int | None = None
+    page: ft.Page,
+    items: list[tuple[int | None, int | None, str]],
+    batch_id: int | None = None,
+    on_close: Callable[[], None] | None = None,
 ) -> None:
-    """items（[(練成回数 or None, ゼニー or None, 画像のパス), ...]）を、回数の順に 1 枚ずつ表示する。"""
+    """items（[(練成回数 or None, ゼニー or None, 画像のパス), ...]）を、回数の順に 1 枚ずつ表示する。
+
+    on_close は「閉じる」で閉じた後に呼ぶ（取込の直後に、続きの確認へ戻るため）。
+    """
     # 画像読み取りの依存（numpy / OpenCV）は重いので、使うときだけ読み込む
     from app.ocr.kuijin_ocr import result_view_png
 
@@ -61,6 +68,11 @@ def show_unread_viewer(
         render()
         page.update()
 
+    def close(e: ft.Event[ft.TextButton]) -> None:
+        page.pop_dialog()
+        if on_close is not None:
+            on_close()
+
     prev_button = ft.TextButton(content="前へ", on_click=lambda e: move(-1))
     next_button = ft.Button(content="次へ", on_click=lambda e: move(1))
     dialog = ft.AlertDialog(
@@ -81,7 +93,7 @@ def show_unread_viewer(
             width=680,
             height=660,
         ),
-        actions=[ft.TextButton(content="閉じる", on_click=lambda e: page.pop_dialog()), prev_button, next_button],
+        actions=[ft.TextButton(content="閉じる", on_click=close), prev_button, next_button],
     )
     render()
     page.show_dialog(dialog)

@@ -356,7 +356,8 @@ def build_import_view(
         select_dir_button.disabled = busy
         progress_bar.visible = busy
         if busy:
-            unread_button.visible = False   # 前の取込の分は、次の取込を始めたら出さない
+            unread_items.clear()            # 前の取込の分は、次の取込を始めたら出さない
+            unread_button.visible = False
         page.update()
 
     def report_progress(done: int, total: int) -> None:
@@ -365,7 +366,12 @@ def build_import_view(
         page.update()
 
     def ask_show_results(batch_id: int, label: str | None) -> None:
-        """取込完了後に表示し、「はい」ならon_show_resultsで検索タブへ遷移する。"""
+        """取込完了後に表示し、「はい」ならon_show_resultsで検索タブへ遷移する。
+
+        画像取込で読めなかった画像があるときは、そのことを先に知らせる。そのまま検索タブへ移ると、取り込まれて
+        いない結果（検索に出ない）があることに気づきにくいため。「読めなかった画像を見る」で画像を見て、
+        閉じるとこの確認に戻る。
+        """
 
         def on_yes(e: ft.Event[ft.Button]) -> None:
             page.pop_dialog()
@@ -375,14 +381,31 @@ def build_import_view(
         def on_no(e: ft.Event[ft.TextButton]) -> None:
             page.pop_dialog()
 
+        def on_view_unread(e: ft.Event[ft.Button]) -> None:
+            from app.ui.unread_viewer import show_unread_viewer
+
+            page.pop_dialog()
+            show_unread_viewer(page, list(unread_items), batch_id, on_close=lambda: ask_show_results(batch_id, label))
+
+        content: list[ft.Control] = [ft.Text("取り込んだバッチを対象に、検索タブで結果を表示します。")]
+        actions: list[ft.Control] = [
+            ft.TextButton(content="いいえ", on_click=on_no),
+            ft.Button(content="はい", on_click=on_yes),
+        ]
+        if unread_items:
+            content.insert(0, ft.Text(
+                f"読み取れない値があった画像が {len(unread_items)}枚 あります。この分は取り込んでいないので、"
+                "検索には出ません。先に画像を見て確認してください（後から、取込タブのボタンや履歴タブの"
+                "「エラー」欄からも見られます）。",
+                color=ft.Colors.RED_700,
+                weight=ft.FontWeight.BOLD,
+            ))
+            actions.insert(0, ft.Button(content=f"読めなかった画像 {len(unread_items)}枚 を見る", on_click=on_view_unread))
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("結果を表示しますか"),
-            content=ft.Text("取り込んだバッチを対象に、検索タブで結果を表示します。"),
-            actions=[
-                ft.TextButton(content="いいえ", on_click=on_no),
-                ft.Button(content="はい", on_click=on_yes),
-            ],
+            content=ft.Column(content, tight=True, spacing=12, width=520),
+            actions=actions,
         )
         page.show_dialog(dialog)
 
@@ -580,11 +603,12 @@ def build_import_view(
 
         run = result.run
         extra = [f"読み取りの矛盾 {len(run.report.errors)}件", f"仕様違反 {len(run.report.spec_errors)}件"]
-        finish_import(result.summary, label, extra, frozenset(line for line, _, _, _ in run.report.unread))
-        # 読めない値があった行は取り込んでいない。何回目の練成かと画像を、ボタンから見てもらう
+        # 読めない値があった行は取り込んでいない。何回目の練成かと画像を見てもらう
+        # （finish_import が出す「結果を表示しますか」の確認でも知らせるので、先に入れておく）
         by_name = {Path(path).name: path for path in session.paths}
         unread_items[:] = [(count, zeny, by_name[name]) for _, count, zeny, name in run.report.unread]
         unread_batch[0] = result.summary.batch_id
+        finish_import(result.summary, label, extra, frozenset(line for line, _, _, _ in run.report.unread))
         if unread_items:
             unread_button.content = f"読めなかった画像 {len(unread_items)}枚 を見る"
             unread_button.visible = True
