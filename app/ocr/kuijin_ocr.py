@@ -86,6 +86,13 @@ MATCH_THRESHOLD = {"default": (0.15, 0.2),
 # 文字の形だけでゆるめると「雷」と「龍」、「水」と「氷」を取り違えるが、この組はアイコンの色が違う
 # （経緯と数値は docs/ocr_render_difference.md）
 NAME_LOOSE_THRESHOLD = (0.20, 0.25)
+# スロット欄が上の基準でどの見本にも当たらなかったときの、ゆるい基準（TemplateBank._loose_slot_match）。
+# いちばん近い見本との全体の違いが SLOT_LOOSE_WHOLE 未満で、ラベルの違う見本がそれより SLOT_LOOSE_MARGIN 以上
+# 遠いときに、その見本とみなす（区画の違いは見ない）。レア演出の赤い背景や光の粒で、絵の線が少し変わるため。
+# 同梱の見本では、ラベルの違う見本同士の全体の違いは 0.39 以上（スロット 1 つ分の絵が違うと、それだけ変わる）、
+# 同じラベルのいちばん近い見本との違いは多くが 0.25 未満。見本を 1 つ抜いて当て直しても取り違えは 0
+SLOT_LOOSE_WHOLE = 0.25
+SLOT_LOOSE_MARGIN = 0.10
 BLOCK_W = 16
 SIGNATURE_THRESHOLD = 0.3
 MIN_INK = 40              # スキル名行の画素数がこれ未満ならスキル無し
@@ -103,6 +110,7 @@ class Region:
     contrast: float   # 背景との差がこれ以上なら文字とみなす。1 未満なら「最も明るい画素と背景の差」に対する割合
     min_component: int = 3    # これ未満の画素数の点はノイズ（JPEG ノイズ・演出のきらめき）として捨てる
     right_aligned: bool = False   # 右寄せの数値の欄。値の文字から離れた成分を捨てる（drop_detached）
+    x_min: int = 0            # これより左の列は使わない（絵が始まる位置より左にあるのは演出の光の粒）
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -124,6 +132,7 @@ class Region:
     def ink(self, img: np.ndarray, dy: int = 0) -> np.ndarray:
         """二値化し、右寄せの数値の欄では値の一部でない成分を捨てる（位置はそろえない）。"""
         ink = self.threshold(img, dy)
+        ink[:, : self.x_min] = False
         return drop_detached(ink) if self.right_aligned else ink
 
     def binarize(self, img: np.ndarray, dy: int = 0) -> np.ndarray:
@@ -220,7 +229,9 @@ BAR_X0, BAR_PITCH, BAR_Y = 560, 16, 403
 MAX_LEVEL = 8
 ICON_X0, ICON_Y0, ICON_X1, ICON_Y1 = 521, 385, 539, 400   # スキル名の左のアイコン（1 行目）
 VALUE_W, VALUE_H = 72, 22
-SLOT = Region(660, 183, 762, 206, "gb", 50)
+# スロットの絵の左端は、欄の 15 列目（強化されたスロットは緑の縁の分だけ広く 13 列目）にいつもある
+# （4 バッチの約 1 万枚で確認）。それより左に光の粒があると、align の位置合わせがずれて見本に当たらなくなる
+SLOT = Region(660, 183, 762, 206, "gb", 50, x_min=12)
 SKILL_DY = [0, 51, 101]    # 2・3 行目のずれ（間隔は約 50.5 画素）
 MAX_SKILLS = len(SKILL_DY)
 RESIST_NAMES = ["fire", "water", "thunder", "ice", "dragon"]
@@ -550,11 +561,14 @@ class TemplateBank:
                 if self.sources[best] is None:
                     self.sources[best] = source
                 return best
+            loose = None
             if self.kind == "name" and features:
                 loose = self._loose_match(whole_dist, block_dist, features)
-                if loose is not None:
-                    self.loose_matches += 1
-                    return loose
+            elif self.kind == "slot":
+                loose = self._loose_slot_match(whole_dist)
+            if loose is not None:
+                self.loose_matches += 1
+                return loose
         self.bits = np.vstack([self.bits, bits])
         self.labels.append(None)
         self.sources.append(source)
@@ -580,6 +594,18 @@ class TemplateBank:
                     and len(features.get("bar", "")) == prop["max"]
                     and np.linalg.norm(icon - np.array(prop["icon"])) <= ICON_TOLERANCE):
                 return int(i)
+        return None
+
+    def _loose_slot_match(self, whole_dist: np.ndarray) -> int | None:
+        """スロット欄のゆるい基準: いちばん近い見本が十分近く、ラベルの違う見本が十分遠ければ、その見本を返す。"""
+        labeled = np.array([not self.is_unlabeled(i) for i in range(len(self.labels))])
+        if not labeled.any():
+            return None
+        dist = np.where(labeled, whole_dist, 1.0)
+        best = int(dist.argmin())
+        other = np.array([labeled[i] and self.labels[i] != self.labels[best] for i in range(len(self.labels))])
+        if dist[best] < SLOT_LOOSE_WHOLE and (not other.any() or whole_dist[other].min() - dist[best] >= SLOT_LOOSE_MARGIN):
+            return best
         return None
 
     def unpack(self, packed: np.ndarray) -> np.ndarray:

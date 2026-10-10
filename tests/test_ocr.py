@@ -103,6 +103,31 @@ def test_drop_detached_removes_sparks_away_from_the_value():
     assert (drop_detached(ink(digit)) == ink(digit)).all()
 
 
+def test_slot_loose_match_and_left_margin():
+    """スロット欄は、今の基準で当たらなくても、いちばん近い見本が十分近くてほかのラベルが遠ければ、その見本とみなす。
+
+    レア演出の赤い背景や光の粒で、絵の線が少し変わるため。絵より左にある光の粒は、位置合わせの前に消す。
+    """
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import Region, TemplateBank
+
+    slots = TemplateBank(BUNDLED_TEMPLATE_DIR, "1280x720", "slot", "_base3")
+    count, index = len(slots.labels), slots.labels.index("+3")
+    thin = slots.bits[index].copy()
+    thin[np.flatnonzero(thin)[::5]] = False       # 全体の違い 0.2（今の基準は 0.15 未満）
+    hit = slots.match(thin)
+    assert slots.labels[hit] == "+3" and len(slots.labels) == count and slots.loose_matches == 1
+    broken = slots.bits[index].copy()
+    broken[np.flatnonzero(broken)[::2]] = False   # 全体の違い 0.5 → 新しい見本
+    assert slots.match(broken) == count
+
+    img = np.zeros((10, 20, 3), dtype=np.uint8)
+    img[4, 2] = img[4, 10] = (200, 200, 200)      # 2 列目は絵より左（光の粒）、10 列目は絵
+    ink = Region(0, 0, 20, 10, "gb", 50, x_min=5).ink(img)
+    assert not ink[4, 2] and ink[4, 10]
+
+
 def test_app_reads_with_bundled_templates_only(tmp_path):
     """アプリ（label_dir あり）は同梱の見本だけで読み、保存もラベルの入力もしない。
 
