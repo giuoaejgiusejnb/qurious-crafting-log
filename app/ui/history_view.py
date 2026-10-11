@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 from typing import Callable
 
@@ -5,6 +6,9 @@ import flet as ft
 
 from app.core.history import delete_batch, fetch_batch_errors, list_batches
 from app.db.connection import get_connection
+
+# 矛盾・仕様違反の文の中にある、画像のファイル名（Switch が付けた名前。例: 2026101000524300-9C1E….jpg）
+_IMAGE_NAME_RE = re.compile(r"[0-9A-Za-z_-]+\.jpg", re.IGNORECASE)
 
 
 def build_history_view(
@@ -121,6 +125,23 @@ def build_history_view(
             # エラーの一覧の上に重ねて開く。画像を閉じると、エラーの一覧にそのまま（スクロールの位置も）戻る
             show_unread_viewer(page, errors.unread, batch_id)
 
+        def issue_controls(detail: str) -> list[ft.Control]:
+            """矛盾・仕様違反の 1 件。文の中に画像のファイル名があり、画像のフォルダが分かれば、
+            押すとエクスプローラーでその画像の場所を開くボタンを下に添える。"""
+            controls: list[ft.Control] = [ft.Text(f"・{detail}", selectable=True)]
+            names = list(dict.fromkeys(_IMAGE_NAME_RE.findall(detail)))
+            if names and errors.image_dir is not None:
+                controls.append(
+                    ft.Row(
+                        [ft.Text("　　画像：", size=12, color=ft.Colors.GREY_700),
+                         *(image_link(errors.image_dir, name) for name in names)],
+                        spacing=2,
+                        wrap=True,
+                        vertical_alignment=ft.CrossAxisAlignment.CENTER,
+                    )
+                )
+            return controls
+
         ocr_controls: list[ft.Control] = []
         if errors.unread:
             # 画像読み取り（8bit）のバッチだけ。読めない値があって取り込まなかった画像
@@ -136,7 +157,7 @@ def build_history_view(
             ocr_controls += [
                 ft.Divider(),
                 ft.Text(f"画像読み取りの矛盾（要確認）（{len(errors.ocr)}件）", weight=ft.FontWeight.BOLD),
-                *(ft.Text(f"・{detail}", selectable=True) for detail in errors.ocr),
+                *(control for detail in errors.ocr for control in issue_controls(detail)),
             ]
         if errors.spec:
             # 画像読み取り（8bit）のバッチだけ。抽選の仕様で作れない結果（読み間違いの疑い）
@@ -144,7 +165,7 @@ def build_history_view(
                 ft.Divider(),
                 ft.Text(f"仕様違反（要確認）（{len(errors.spec)}件）", weight=ft.FontWeight.BOLD),
                 ft.Text("抽選の仕様では作れない結果です。画像を見て、読み間違いがないか確認してください。", size=12),
-                *(ft.Text(f"・{detail}", selectable=True) for detail in errors.spec),
+                *(control for detail in errors.spec for control in issue_controls(detail)),
             ]
 
         content = ft.Column(
