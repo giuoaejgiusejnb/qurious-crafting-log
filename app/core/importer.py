@@ -32,7 +32,7 @@ class ImportSummary:
     skipped_results: list[tuple[int, int | None]] = field(default_factory=list)
     # 重複（幽霊行）として除去した行数。表示用途のみでDBには保存しない
     dropped_duplicate_count: int = 0
-    # errors のうち、画像読み取りで読めない値があった行の数（画像を見てもらう。kind='unread'）
+    # 画像読み取りで、確認が必要なため取り込まなかった画像の数（画像を見てもらう。kind='unread'）
     unread_count: int = 0
 
 
@@ -135,7 +135,7 @@ def import_block(
     source: str = SOURCE_NX,
     ocr_issues: list[str] | None = None,
     spec_issues: list[str] | None = None,
-    unread_images: dict[int, tuple[str, int | None]] | None = None,
+    review_images: list[tuple[int | None, int | None, str, str]] | None = None,
     image_dir: str | None = None,
 ) -> ImportSummary:
     """result_logのテキストブロックをパースし、1つの取込バッチとしてDBに保存する。
@@ -147,9 +147,10 @@ def import_block(
     sourceは取込元（SOURCE_NX / SOURCE_8BIT）。ocr_issuesは画像読み取りの自己チェックで
     見つかった矛盾（kind='ocr'）、spec_issuesは抽選の仕様で作れない結果（kind='spec'）で、
     同じく import_issues に保存する。
-    unread_imagesは画像読み取りで読めない値があった行 {textの行番号（1始まり）: (画像のパス, ゼニー or None)}。
-    その行のパースエラーは kind='unparsable' ではなく kind='unread' として保存し、履歴タブで画像を見てもらう
-    （detail は {"path": 画像のパス, "zeny": ゼニー} の JSON）。
+    review_imagesは画像読み取りで確認が必要なため取り込まない画像
+    [(練成回数 or None, ゼニー or None, 画像のパス, 理由), ...]（textには入っていないこと）。kind='unread' として保存し
+    （detail は {"path": 画像のパス, "zeny": ゼニー, "reason": 理由} の JSON）、履歴タブで画像を見てもらう。
+    その回数は「飛ばされている練成」には数えない。
     image_dirは画像読み取りで取り込んだ画像のフォルダ（履歴タブから画像の場所を開くために保存する）。
     """
     parsed, errors = parse_result_log_block(text)
@@ -160,10 +161,11 @@ def import_block(
     }
     # パースできなかった行の回数は「読み込みできなかった行」側で報告するため、
     # その欠番は「飛ばされている練成」からは除く。
+    review_counts = {count for count, _, _, _ in review_images or [] if count is not None}
     skipped_results = [
         (count, zeny)
         for count, zeny in _find_skipped_results(results)
-        if count not in error_zeny_counts
+        if count not in error_zeny_counts and count not in review_counts
     ]
 
     imported_at = dt.datetime.now().isoformat(timespec="seconds")
@@ -179,15 +181,22 @@ def import_block(
         conn.executemany(
             """
             INSERT INTO import_issues (batch_id, kind, line_number, zeny_count, detail)
-            VALUES (?, ?, ?, ?, ?)
+            VALUES (?, 'unparsable', ?, ?, ?)
             """,
             [
-                (batch_id, "unread", line_number, _extract_zeny_count_from_message(message),
-                 json.dumps({"path": unread_images[line_number][0], "zeny": unread_images[line_number][1]},
-                            ensure_ascii=False))
-                if unread_images and line_number in unread_images
-                else (batch_id, "unparsable", line_number, _extract_zeny_count_from_message(message), message)
+                (batch_id, line_number, _extract_zeny_count_from_message(message), message)
                 for line_number, message in errors
+            ],
+        )
+    if review_images:
+        conn.executemany(
+            """
+            INSERT INTO import_issues (batch_id, kind, line_number, zeny_count, detail)
+            VALUES (?, 'unread', NULL, ?, ?)
+            """,
+            [
+                (batch_id, count, json.dumps({"path": path, "zeny": zeny, "reason": reason}, ensure_ascii=False))
+                for count, zeny, path, reason in review_images
             ],
         )
     if skipped_results:
@@ -259,10 +268,10 @@ def import_block(
         batch_id=batch_id,
         imported_count=total,
         # 矛盾のうち欠番の知らせは、「飛ばされている練成」（skipped_results）と重なるので数えない
-        error_count=len(errors) + len(skipped_results) + len(spec_issues or [])
+        error_count=len(errors) + len(skipped_results) + len(spec_issues or []) + len(review_images or [])
         + sum(1 for detail in ocr_issues or [] if not is_missing_shot_issue(detail)),
         errors=errors,
         skipped_results=skipped_results,
         dropped_duplicate_count=dropped_duplicate_count,
-        unread_count=sum(1 for line_number, _ in errors if unread_images and line_number in unread_images),
+        unread_count=len(review_images or []),
     )

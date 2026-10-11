@@ -144,12 +144,12 @@ def build_history_view(
 
         ocr_controls: list[ft.Control] = []
         if errors.unread:
-            # 画像読み取り（8bit）のバッチだけ。読めない値があって取り込まなかった画像
+            # 画像読み取り（8bit）のバッチだけ。確認が必要なため取り込まなかった画像
             ocr_controls = [
                 ft.Divider(),
-                ft.Text(f"読めなかった画像（{len(errors.unread)}枚）", weight=ft.FontWeight.BOLD),
-                ft.Text("読み取れない値があったため、取り込んでいません（検索にも出ません）。画像を見て確認してください。",
-                        size=12),
+                ft.Text(f"確認が必要な画像（{len(errors.unread)}枚）", weight=ft.FontWeight.BOLD),
+                ft.Text("読み取れない値があったか、読み取った内容に疑わしい点があったため、取り込んでいません"
+                        "（検索にも出ません）。画像を見て確認してください。", size=12),
                 ft.Button(content="画像を見る", on_click=open_unread_viewer),
             ]
         if errors.ocr:

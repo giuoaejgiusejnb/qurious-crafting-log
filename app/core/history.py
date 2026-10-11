@@ -74,7 +74,8 @@ class BatchErrors:
     skipped_between: dict[int, tuple[str, str]] = field(default_factory=dict)
     # 取り込んだ画像のフォルダ（画像読み取りのバッチだけ。分からなければ None）
     image_dir: str | None = None
-    # 画像読み取り（8bit）で読めない値があり、取り込めなかった画像 [(練成回数 or None, ゼニー or None, 画像のパス), ...]
+    # 画像読み取り（8bit）で、確認が必要なため取り込まなかった画像（読めない値がある・読み取った内容に疑わしい点がある）
+    # [(練成回数 or None, ゼニー or None, 画像のパス), ...]
     unread: list[tuple[int | None, int | None, str]] = field(default_factory=list)
     # 画像読み取り（8bit）の自己チェックで見つかった矛盾の内容
     ocr: list[str] = field(default_factory=list)
@@ -120,8 +121,9 @@ def fetch_batch_errors(conn: sqlite3.Connection, batch_id: int) -> BatchErrors:
         elif kind == "spec":
             errors.spec.append(detail or "")
     errors.skipped.sort()
+    errors.unread.sort(key=lambda item: (item[0] is None, item[0] or 0))   # 回数の順。回数の分からないものは最後
     if errors.image_dir is None and errors.unread:
-        # フォルダを保存していなかった頃のバッチ: 読めなかった画像があれば、その場所から分かる
+        # フォルダを保存していなかった頃のバッチ: 確認が必要な画像があれば、その場所から分かる
         errors.image_dir = str(Path(errors.unread[0][2]).parent)
     # 欠番のゼニーは、前後の画像のゼニーの間にある
     for count, zeny in errors.skipped:

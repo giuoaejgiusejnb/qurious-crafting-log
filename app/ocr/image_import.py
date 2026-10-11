@@ -14,7 +14,15 @@ from pathlib import Path
 from typing import Callable
 
 from app.core.importer import SOURCE_8BIT, ImportSummary, import_block
-from app.ocr.kuijin_ocr import BUNDLED_TEMPLATE_DIR, OcrRun, OcrSession, finish_reading, list_images, start_reading
+from app.ocr.kuijin_ocr import (
+    BUNDLED_TEMPLATE_DIR,
+    OcrRun,
+    OcrSession,
+    finish_reading,
+    list_images,
+    save_templates,
+    start_reading,
+)
 
 # 進捗を (段階, 済み, 全体) で渡す。段階は "extract"（画像の切り出し）・"match"（見本との照合）・
 # "report"（結果の作成。済み・全体は 0）・"import"（DB への保存）
@@ -30,6 +38,27 @@ class ImageImportResult:
 
 class NoImagesError(Exception):
     pass
+
+
+# 確認が必要な画像がこれより多いバッチは、取り込まない（枚数と、結果画面に対する割合の両方を超えたとき）。
+# 入力の違い（防具・初期スロット・元から持つスキル・抽選テーブル・1回のゼニー）、対応していない撮り方、
+# ゲームや Switch の表示の変化などで、ほとんどの画像が確認が必要になる。どれが原因かはアプリには分からないが、
+# どの場合も、取り込んだ記録は当てにならない。普通のバッチでは 1% に届かない（別のユーザーの初めてのバッチで 0.4%）
+REVIEW_STOP_COUNT = 20
+REVIEW_STOP_SHARE = 0.05
+
+
+def too_many_to_review(review: int, total: int) -> bool:
+    """確認が必要な画像が review 枚、結果画面が total 枚のとき、取込をやめるか。"""
+    return review >= REVIEW_STOP_COUNT and review > total * REVIEW_STOP_SHARE
+
+
+class TooManyReviewError(Exception):
+    """確認が必要な画像が多すぎる。取込は行わない（DB にも見本にも何も保存しない）。"""
+
+    def __init__(self, review: int, total: int) -> None:
+        self.review, self.total = review, total
+        super().__init__(f"確認が必要な画像が多すぎるため、取込を中止しました（結果画面 {total}枚 のうち {review}枚）")
 
 
 def can_use_processes() -> bool:
@@ -82,25 +111,29 @@ def finish_image_import(
 ) -> ImageImportResult:
     """labels（{(見本の名前, 番号): ラベル}）を見本に付けて保存し、読み取り結果を取込形式にして import_block で保存する。
 
-    読めない値（"?"）のある行は取り込まず、画像のパスを kind='unread' として保存する（履歴タブで画像を見てもらう）。
-    読み取りの自己チェックで見つかった矛盾は kind='ocr'、抽選の仕様で作れない結果は kind='spec' として、
-    バッチのエラーに保存する。
+    確認が必要な行（読めない値 "?" がある・その画像だけで分かる矛盾がある・抽選の仕様で作れない。Report.review）は
+    取り込まず、画像のパスを kind='unread' として保存する（履歴タブで画像を見てもらう）。
+    1 枚の画像の問題ではない矛盾（ゼニーの減り方など。Report.batch_errors）は、kind='ocr' としてバッチのエラーに保存する。
+    確認が必要な行が多すぎるときは、何も保存せずに TooManyReviewError にする。
     """
     if labels:
         session.apply_labels(labels)
     if progress_callback:
         progress_callback("report", 0, 0)
-    run = finish_reading(session)
-    by_name = {Path(path).name: path for path in session.paths}
+    run = finish_reading(session, save=False)
+    review, total = run.report.review, run.report.line_count
+    if too_many_to_review(len(review), total):
+        raise TooManyReviewError(len(review), total)
+    save_templates(session)
+    by_name = {Path(path).name: str(Path(path).resolve()) for path in session.paths}
     summary = import_block(
         conn,
-        run.report.text,
+        run.report.import_text,
         label,
         progress_callback=(lambda d, t: progress_callback("import", d, t)) if progress_callback else None,
         source=SOURCE_8BIT,
-        ocr_issues=run.report.errors,
-        spec_issues=run.report.spec_errors,
-        unread_images={line: (by_name[name], zeny) for line, _, zeny, name in run.report.unread},
+        ocr_issues=run.report.batch_errors,
+        review_images=[(count, zeny, by_name[name], reason) for _, count, zeny, name, reason in review],
         image_dir=str(Path(session.paths[0]).resolve().parent) if session.paths else None,
     )
     return ImageImportResult(len(session.paths), run, summary)

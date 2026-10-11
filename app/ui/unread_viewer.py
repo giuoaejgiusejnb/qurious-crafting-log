@@ -1,7 +1,7 @@
-"""画像読み取り（8bit）で読めない値があり、取り込めなかった画像を 1 枚ずつ見てもらうダイアログ。
+"""画像読み取り（8bit）で、確認が必要なため取り込まなかった画像を 1 枚ずつ見てもらうダイアログ。
 
-読めない値のある行は DB に入れない（検索にも出ない）。代わりに、何回目の練成か・ゼニー・画像を見せて、
-ユーザーに直接確かめてもらう。画像は取り込んだときのフォルダから読むので、移動・削除していると表示できない。
+読めない値がある行や、読み取った内容に疑わしい点がある行は DB に入れない（検索にも出ない）。代わりに、
+何回目の練成か・ゼニー・画像を見せて、ユーザーに直接確かめてもらう（何が疑わしいかは出さない。画像に答えがある）。画像は取り込んだときのフォルダから読むので、移動・削除していると表示できない。
 """
 
 import os
@@ -48,7 +48,7 @@ def show_unread_viewer(
     def render() -> None:
         count, zeny, path = items[position[0]]
         where = f"バッチ #{batch_id} の" if batch_id is not None else ""
-        title.value = f"{where}読めなかった画像（{position[0] + 1} / {len(items)}）"
+        title.value = f"{where}確認が必要な画像（{position[0] + 1} / {len(items)}）"
         headline.value = (
             (f"{count}回目" if count is not None else "回数不明")
             + "　　ゼニー："
@@ -80,8 +80,8 @@ def show_unread_viewer(
         title=title,
         content=ft.Column(
             [
-                ft.Text("読み取れない値があったため、この結果は取り込んでいません（検索にも出ません）。"
-                        "画像を見て確認してください。", size=12),
+                ft.Text("読み取れない値があったか、読み取った内容に疑わしい点があったため、この結果は取り込んでいません"
+                        "（検索にも出ません）。画像を見て確認してください。", size=12),
                 headline,
                 image_holder,
                 missing,

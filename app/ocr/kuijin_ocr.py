@@ -326,7 +326,7 @@ def load_image(path: str) -> tuple[np.ndarray, str] | None:
     return img, device
 
 
-# 読めなかった画像を見てもらうときに切り出す範囲（強化後のステータスの枠と、右の防具名。x0, y0, x1, y1）
+# 確認が必要な画像を見てもらうときに切り出す範囲（強化後のステータスの枠と、右の防具名。x0, y0, x1, y1）
 RESULT_VIEW_AREA = (495, 88, 1140, 615)
 
 
@@ -763,9 +763,14 @@ class Report:
     line_count: int
     duplicate_count: int   # 同じ回の重複として除いた枚数
     spec_errors: list[str] = field(default_factory=list)   # 抽選の仕様で作れない結果（読み間違いの疑い）
-    # 読めない値（"?"）があって取り込めない行:
-    # (text の行番号〔1 始まり〕, 回数〔分からなければ None〕, ゼニー〔千単位。読めなければ None〕, 画像のファイル名)
-    unread: list[tuple[int, int | None, int | None, str]] = field(default_factory=list)
+    # 確認が必要な行（アプリでは取り込まずに、画像を見てもらう）: 読めない値（"?"）がある行と、
+    # その画像だけで分かる矛盾（check_consistency）・仕様違反（check_spec）のある行。
+    # (text の行番号〔1 始まり〕, 回数〔分からなければ None〕, ゼニー〔千単位。読めなければ None〕, 画像のファイル名, 理由)
+    review: list[tuple[int, int | None, int | None, str, str]] = field(default_factory=list)
+    # errors のうち、1 枚の画像の問題ではないもの（ゼニーの減り方の矛盾・同じ回の画像の食い違い）。
+    # アプリでは、これだけを「画像読み取りの矛盾」として残す
+    batch_errors: list[str] = field(default_factory=list)
+    import_text: str = ""   # text から review の行を除いたもの（アプリが取り込むのはこちら）
 
 
 def build_report(records: list, step_k: int, template_dir: Path,
@@ -787,6 +792,7 @@ def build_report(records: list, step_k: int, template_dir: Path,
     kept: list[tuple[str, str, dict]] = []         # lines と同じ並びの、残した画像 (ファイル名, 画面, 値)
     line_of: dict[int, int] = {}                   # 回数 -> lines の位置
     warnings, dup = [], 0
+    conflicts: list[str] = []   # warnings のうち、同じ回の画像の食い違い（1 枚の画像の問題ではないもの）
     for name, screen, v in rows:
         hidden = classify_hidden(v, minus_skills, checker) if screen == "screen2" else HIDDEN_UNKNOWN
         body = report_row(v, screen, hidden)
@@ -811,6 +817,7 @@ def build_report(records: list, step_k: int, template_dir: Path,
                     elif kept_body != body and "?" not in "".join(body):
                         warnings.append(f"{name}: {count}回目の画像が {kept_name} と重なっていますが、読み取った内容が"
                                         f"違います（{kept_name} の方を取り込みました）")
+                        conflicts.append(warnings[-1])
                     continue
                 seen[count] = (name, body)
                 line_of[count] = len(lines)
@@ -818,14 +825,29 @@ def build_report(records: list, step_k: int, template_dir: Path,
         kept.append((name, screen, v))
     header = ["回数", "ゼニー", "スロ", "コスト", "マイナス", "耐性"]
     header += [f"第{i}{k}" for i in range(1, REPORT_SKILLS + 1) for k in ("名", "値")] + ["対象"]
-    text = (f"初期ゼニー,{init if init is not None else '?'}\n" + ",".join(header) + "\n"
-            + "\n".join(",".join([c, z, *b]) for c, z, b in lines) + "\n")
-    errors = warnings + check_sequence(rows, step_k) + check_consistency(records, template_dir, minus_skills)
-    spec_errors = check_spec(lines, kept, table, minus_skills) if table is not None else []
+    head = f"初期ゼニー,{init if init is not None else '?'}\n" + ",".join(header) + "\n"
+    text = head + "\n".join(",".join([c, z, *b]) for c, z, b in lines) + "\n"
+    sequence = check_sequence(rows, step_k)
+    consistency = check_consistency(records, template_dir, minus_skills)
+    errors = warnings + sequence + [f"{name}: {message}" for name, message in consistency]
+    spec = check_spec(lines, kept, table, minus_skills) if table is not None else []
+    # 確認が必要な行と、その理由（lines の位置ごと）
+    reasons: dict[int, list[str]] = {}
+    for i, (c, z, b) in enumerate(lines):
+        if "?" in c + z + "".join(b):
+            reasons.setdefault(i, []).append("読み取れない値があります")
+    index_of = {name: i for i, (name, _, _) in enumerate(kept)}
+    for name, message in consistency:
+        if name in index_of:   # 同じ回の重複として除いた画像の分は、取り込まないので対象外
+            reasons.setdefault(index_of[name], []).append(message)
+    for i, message in spec:
+        reasons.setdefault(i, []).append(message)
     # text の先頭 2 行は初期ゼニーと見出しなので、lines の i 番目は i + 3 行目
-    unread = [(i + 3, None if c == "?" else int(c), None if "?" in z else int(z), kept[i][0])
-              for i, (c, z, b) in enumerate(lines) if "?" in c + z + "".join(b)]
-    return Report(text, errors, len(lines), dup, spec_errors, unread)
+    review = [(i + 3, None if lines[i][0] == "?" else int(lines[i][0]), None if "?" in lines[i][1] else int(lines[i][1]),
+               kept[i][0], " / ".join(reasons[i])) for i in sorted(reasons)]
+    import_text = head + "".join(",".join([c, z, *b]) + "\n" for i, (c, z, b) in enumerate(lines) if i not in reasons)
+    return Report(text, errors, len(lines), dup, [message for _, message in spec], review, conflicts + sequence,
+                  import_text)
 
 
 def describe_values(v: dict) -> str:
@@ -837,14 +859,14 @@ def describe_values(v: dict) -> str:
     return " / ".join(parts + (["・".join(skills)] if skills else []))
 
 
-def check_spec(lines: list, kept: list, table: int, minus_skills: dict[str, int] | None) -> list[str]:
-    """取込形式に残した行のうち、抽選の仕様で作れないもの（読み間違いの疑い）を返す。
+def check_spec(lines: list, kept: list, table: int, minus_skills: dict[str, int] | None) -> list[tuple[int, str]]:
+    """取込形式に残した行のうち、抽選の仕様で作れないもの（読み間違いの疑い）を、(lines の位置, 内容) で返す。
 
     結果画面２は 4 つ目以降が写っていないので、写っていない分をどう仮定しても作れないときだけ違反にする。
     """
     checker = SpecChecker(table, minus_skills)
     errors = []
-    for (count, _, _), (name, screen, v) in zip(lines, kept):
+    for i, ((count, _, _), (name, screen, v)) in enumerate(zip(lines, kept)):
         if screen == "screen1":
             reason = checker.violation(v)
         elif classify_hidden(v, minus_skills, checker) == HIDDEN_VIOLATION:
@@ -853,7 +875,7 @@ def check_spec(lines: list, kept: list, table: int, minus_skills: dict[str, int]
             reason = None
         if reason:
             where = f"{count}回目（{name}）" if count != "?" else name
-            errors.append(f"{where}: {reason}（読み取り: {describe_values(v)}）")
+            errors.append((i, f"{where}: {reason}（読み取り: {describe_values(v)}）"))
     return errors
 
 
@@ -901,8 +923,8 @@ def level_change_error(skill: str, lv: int, max_level: int, minus_skills: dict[s
 
 
 def check_consistency(records: list, template_dir: Path,
-                      minus_skills: dict[str, int] | None = None) -> list[str]:
-    """ゲームの仕様から、読み取り結果の矛盾を探す。
+                      minus_skills: dict[str, int] | None = None) -> list[tuple[str, str]]:
+    """ゲームの仕様から、読み取り結果の矛盾を探し、(画像のファイル名, 内容) で返す。
 
       - 四角の総数（そのスキルの最大レベル）がスキルごとに決まった数か
       - スキル名の左のアイコンの色が、そのスキルの色か（「雷」と「龍」の取り違えなどに気付ける）
@@ -926,39 +948,39 @@ def check_consistency(records: list, template_dir: Path,
         for key in ["defense", *RESIST_NAMES]:
             limit = VALUE_LIMITS["defense" if key == "defense" else "resist"]
             if v[key] not in ("-", "") and "?" not in v[key] and abs(int(v[key])) > limit:
-                errors.append(f"{name}: {field_names[key]}の増減 {v[key]} が、ありえる範囲（±{limit}）を超えています"
-                              "（読み間違いの疑い）")
+                errors.append((name, f"{field_names[key]}の増減 {v[key]} が、ありえる範囲（±{limit}）を超えています"
+                                     "（読み間違いの疑い）"))
         for i in range(1, MAX_SKILLS + 1):
             skill, lv, feat = v[f"skill{i}"], v[f"lv{i}"], ex["features"].get(i)
             if not skill or feat is None or "?" in skill + lv:
                 continue
-            where = f"{name}: {i}つ目のスキル「{skill} {lv}」"
+            where = f"{i}つ目のスキル「{skill} {lv}」"
             # 最大レベルは確認済みの表の値を使う。表に無いスキルは、この画像の四角の数で代用する
             max_level = props[skill]["max"] if skill in props else len(feat["bar"])
             reason = level_change_error(skill, int(lv), max_level, minus_skills)
             if reason:
-                errors.append(f"{where}: {reason}（読み間違いか「防具が元から持つスキル」の入力違いの疑い）")
+                errors.append((name, f"{where}: {reason}（読み間違いか「防具が元から持つスキル」の入力違いの疑い）"))
             expected = "red" if int(lv) < 0 else "green" if "g" in feat["bar"] else "orange"
             if feat["color"] != expected:
-                errors.append(f"{where} の「Lv」の文字の色（{color_names.get(feat['color'], feat['color'])}）が、"
-                              f"レベルのマス目から予想される色（{color_names[expected]}）と違います（読み間違いの疑い）")
+                errors.append((name, f"{where} の「Lv」の文字の色（{color_names.get(feat['color'], feat['color'])}）が、"
+                                     f"レベルのマス目から予想される色（{color_names[expected]}）と違います（読み間違いの疑い）"))
             if minus_skills is not None and int(lv) < 0:
                 if skill not in minus_skills:
-                    errors.append(f"{where}: 防具が元から持っていないスキルが下がっています（下がるのは "
-                                  f"{'・'.join(minus_skills)} だけのはず。読み間違いか「防具が元から持つスキル」の入力違いの疑い）")
+                    errors.append((name, f"{where}: 防具が元から持っていないスキルが下がっています（下がるのは "
+                                         f"{'・'.join(minus_skills)} だけのはず。読み間違いか「防具が元から持つスキル」の入力違いの疑い）"))
                 elif -int(lv) > minus_skills[skill]:
-                    errors.append(f"{where}: 元のレベル（Lv{minus_skills[skill]}）より多く下がっています"
-                                  "（読み間違いか「防具が元から持つスキル」の入力違いの疑い）")
+                    errors.append((name, f"{where}: 元のレベル（Lv{minus_skills[skill]}）より多く下がっています"
+                                         "（読み間違いか「防具が元から持つスキル」の入力違いの疑い）"))
             if skill not in props:
                 added.setdefault(skill, (len(feat["bar"]), feat["icon"], name))
                 continue
             if len(feat["bar"]) != props[skill]["max"]:
-                errors.append(f"{where}: レベルのマス目が {len(feat['bar'])} 個で、{skill} の最大レベル"
-                              f"（{props[skill]['max']}）と合いません（スキル名かレベルの読み間違いの疑い）")
+                errors.append((name, f"{where}: レベルのマス目が {len(feat['bar'])} 個で、{skill} の最大レベル"
+                                     f"（{props[skill]['max']}）と合いません（スキル名かレベルの読み間違いの疑い）"))
             if feat["icon"]:
                 icon = np.array([int(x) for x in feat["icon"].split(":")])
                 if np.linalg.norm(icon - np.array(props[skill]["icon"])) > ICON_TOLERANCE:
-                    errors.append(f"{where}: スキルのアイコンの色が {skill} の色と違います（スキル名の読み間違いの疑い）")
+                    errors.append((name, f"{where}: スキルのアイコンの色が {skill} の色と違います（スキル名の読み間違いの疑い）"))
     for skill, (mx, icon, name) in added.items():
         props[skill] = {"max": mx, "icon": [int(x) for x in icon.split(":")] if icon else [], "unverified": name}
         print(f"新しいスキル {skill} の性質（最大レベル {mx}、アイコンの色 {icon}）を {name} から登録しました。"
@@ -1385,17 +1407,26 @@ def start_reading(
     return session
 
 
-def finish_reading(session: OcrSession) -> OcrRun:
-    """付いているラベルで結果を作り、見本を保存する。"""
+def save_templates(session: OcrSession) -> None:
+    """保存する見本（OcrSession.bank）を保存する。"""
+    for b in session.banks.values():
+        if b.saved:
+            b.save()
+
+
+def finish_reading(session: OcrSession, save: bool = True) -> OcrRun:
+    """付いているラベルで結果を作り、見本を保存する。
+
+    save=False では見本を保存しない（結果を見てから取込をやめることがあるアプリ用。続けるなら save_templates を呼ぶ）。
+    """
     start = time.perf_counter()
     session.build_values()
     for b in session.banks.values():
         if b.kind == "slot":
             # 追加されたスロット数（"+0"〜"+6"）を手で付ける。未設定のものは要確認にする
             b.labels = [lab or f"?slot#{i}" for i, lab in enumerate(b.labels)]
-    for b in session.banks.values():
-        if b.saved:
-            b.save()
+    if save:
+        save_templates(session)
 
     # 1 枚ごとの値。ex が None なら読み込み失敗、values が None なら結果画面以外。
     # ラベルが付いていない見本は "?"（要確認）

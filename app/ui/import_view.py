@@ -88,7 +88,8 @@ def build_import_view(
     """
     progress_bar = ft.ProgressBar(width=400, value=0, visible=False)
     status_text = ft.Text()
-    # 画像取込で読めなかった画像 [(練成回数 or None, ゼニー or None, 画像のパス)] と、そのバッチ。取込のたびに入れ替える
+    # 画像取込で、確認が必要なため取り込まなかった画像 [(練成回数 or None, ゼニー or None, 画像のパス)] と、そのバッチ。
+    # 取込のたびに入れ替える
     unread_items: list[tuple[int | None, int | None, str]] = []
     unread_batch: list[int | None] = [None]
 
@@ -369,8 +370,8 @@ def build_import_view(
     def ask_show_results(batch_id: int, label: str | None) -> None:
         """取込完了後に表示し、「はい」ならon_show_resultsで検索タブへ遷移する。
 
-        画像取込で読めなかった画像があるときは、そのことを先に知らせる。そのまま検索タブへ移ると、取り込まれて
-        いない結果（検索に出ない）があることに気づきにくいため。「読めなかった画像を見る」で画像を見て、
+        画像取込で確認が必要な画像があるときは、そのことを先に知らせる。そのまま検索タブへ移ると、取り込まれて
+        いない結果（検索に出ない）があることに気づきにくいため。「確認が必要な画像を見る」で画像を見て、
         閉じるとこの確認に戻る。
         """
 
@@ -395,13 +396,13 @@ def build_import_view(
         ]
         if unread_items:
             content.insert(0, ft.Text(
-                f"読み取れない値があった画像が {len(unread_items)}枚 あります。この分は取り込んでいないので、"
+                f"確認が必要な画像が {len(unread_items)}枚 あります。この分は取り込んでいないので、"
                 "検索には出ません。先に画像を見て確認してください（後から、取込タブのボタンや履歴タブの"
                 "「エラー」欄からも見られます）。",
                 color=ft.Colors.RED_700,
                 weight=ft.FontWeight.BOLD,
             ))
-            actions.insert(0, ft.Button(content=f"読めなかった画像 {len(unread_items)}枚 を見る", on_click=on_view_unread))
+            actions.insert(0, ft.Button(content=f"確認が必要な画像 {len(unread_items)}枚 を見る", on_click=on_view_unread))
         dialog = ft.AlertDialog(
             modal=True,
             title=ft.Text("結果を表示しますか"),
@@ -410,20 +411,13 @@ def build_import_view(
         )
         page.show_dialog(dialog)
 
-    def finish_import(
-        summary: ImportSummary, label: str | None, extra_lines: list[str], unread_lines: frozenset[int] = frozenset()
-    ) -> None:
-        """取込結果を表示し、他タブの一覧更新と「結果を表示しますか」の確認を行う（nx / 8bit 共通）。
-
-        unread_lines は、画像取込で読めない値があった行（取込テキストの行番号）。「読めなかった画像」として数え、
-        読込失敗（取込テキストとして読めなかった行）とは分けて表示する。
-        """
-        failed = [(ln, msg) for ln, msg in summary.errors if ln not in unread_lines]
-        unread = len(summary.errors) - len(failed)
+    def finish_import(summary: ImportSummary, label: str | None, extra_lines: list[str]) -> None:
+        """取込結果を表示し、他タブの一覧更新と「結果を表示しますか」の確認を行う（nx / 8bit 共通）。"""
+        failed, unread = summary.errors, summary.unread_count
         status_text.value = (
             f"取込完了: 成功 {summary.imported_count}件 / エラー {summary.error_count}件"
             f"（読込失敗 {len(failed)}件・欠番 {len(summary.skipped_results)}件"
-            + (f"・読めなかった画像 {unread}枚" if unread else "")
+            + (f"・確認が必要な画像 {unread}枚" if unread else "")
             + "".join(f"・{line}" for line in extra_lines)
             + f"） / 重複除外 {summary.dropped_duplicate_count}件"
             f"（バッチID: {summary.batch_id}）"
@@ -596,13 +590,23 @@ def build_import_view(
 
     def finish_image_import_with(session: "OcrSession", label: str | None, labels: dict[tuple[str, int], str]) -> None:
         """入力されたラベルで読み取り結果を作り、取込元 8bit のバッチとして保存する。"""
-        from app.ocr.image_import import finish_image_import
+        from app.ocr.image_import import TooManyReviewError, finish_image_import
 
         status_text.value = "読み取り結果を作成中..."
         page.update()
         conn = get_connection(db_path)
         try:
             result = finish_image_import(conn, session, label, labels, image_progress)
+        except TooManyReviewError as exc:
+            # 何が原因かはアプリには分からないので、確かめることを並べる（DB にも見本にも何も保存していない）
+            status_text.value = (
+                f"{exc}。\n次のことを確かめてください。\n"
+                "・防具、初期スロット、防具が元から持つスキル、抽選テーブル、1回のゼニーの入力\n"
+                "・携帯モードで撮った画像か\n"
+                "どれも合っている場合は、アプリが対応していない表示の可能性があります。画像を添えて開発者に連絡してください。"
+            )
+            set_busy(False)
+            return
         except Exception as exc:
             status_text.value = f"画像からの取込に失敗しました: {exc}"
             set_busy(False)
@@ -611,20 +615,20 @@ def build_import_view(
             conn.close()
 
         run = result.run
-        # 矛盾のうち欠番の知らせは、「欠番」として数えている分と重なるので数えない
-        conflicts = sum(1 for detail in run.report.errors if not is_missing_shot_issue(detail))
-        extra = [f"読み取りの矛盾 {conflicts}件", f"仕様違反 {len(run.report.spec_errors)}件"]
-        # 読めない値があった行は取り込んでいない。何回目の練成かと画像を見てもらう
-        # （finish_import が出す「結果を表示しますか」の確認でも知らせるので、先に入れておく）
-        by_name = {Path(path).name: path for path in session.paths}
-        unread_items[:] = [(count, zeny, by_name[name]) for _, count, zeny, name in run.report.unread]
+        # 1 枚の画像の問題ではない矛盾（ゼニーの減り方など）。欠番の知らせは「欠番」と重なるので数えない
+        conflicts = sum(1 for detail in run.report.batch_errors if not is_missing_shot_issue(detail))
+        extra = [f"読み取りの矛盾 {conflicts}件"]
+        # 確認が必要な行（読めない値がある・読み取った内容に疑わしい点がある）は取り込んでいない。
+        # 何回目の練成かと画像を見てもらう（finish_import が出す「結果を表示しますか」の確認でも知らせるので、先に入れておく）
+        by_name = {Path(path).name: str(Path(path).resolve()) for path in session.paths}
+        unread_items[:] = [(count, zeny, by_name[name]) for _, count, zeny, name, _ in run.report.review]
         unread_batch[0] = result.summary.batch_id
-        finish_import(result.summary, label, extra, frozenset(line for line, _, _, _ in run.report.unread))
+        finish_import(result.summary, label, extra)
         if unread_items:
-            unread_button.content = f"読めなかった画像 {len(unread_items)}枚 を見る"
+            unread_button.content = f"確認が必要な画像 {len(unread_items)}枚 を見る"
             unread_button.visible = True
             status_text.value += (
-                f"\n読み取れない値があった画像が {len(unread_items)}枚 あります。この分は取り込んでいません"
+                f"\n確認が必要な画像が {len(unread_items)}枚 あります。この分は取り込んでいません"
                 "（検索にも出ません）。下のボタンか、履歴タブの「エラー」欄から、画像を見て確認してください。"
             )
         status_text.value += (

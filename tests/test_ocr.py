@@ -65,27 +65,49 @@ def test_build_report_reports_missing_shots(tmp_path):
     assert any("2回分の画像がありません" in e for e in report.errors)
 
 
-def test_unread_rows_are_saved_with_their_images(tmp_path):
-    """読めない値（"?"）のある行は取り込まず、何回目の練成かと画像のパスを残す（履歴タブで画像を見てもらう）。"""
+def test_rows_needing_review_are_not_imported(tmp_path):
+    """確認が必要な行は取り込まず、何回目の練成か・ゼニー・画像のパスを残す（履歴タブで画像を見てもらう）。
+
+    確認が必要な行: 読めない値（"?"）がある行と、その画像だけで分かる矛盾のある行。
+    """
     from app.core.history import fetch_batch_errors, list_batches
     from app.core.importer import SOURCE_8BIT, import_block
     from app.db.connection import get_connection
 
     unreadable = _values("92")
     unreadable.update({"water": "+?", "cost": "?"})
-    lost = _values("?")   # 所持ゼニーが読めないと、何回目か分からない
-    report = build_report([_record("a.jpg", _values("100")), _record("b.jpg", _values("96")),
-                           _record("c.jpg", unreadable), _record("d.jpg", lost)], 4, tmp_path)
-    assert report.unread == [(5, 3, 92, "c.jpg"), (6, None, None, "d.jpg")]
+    doubtful = _values("88")
+    doubtful["fire"] = "+30"   # 耐性の増減としてありえない値（読み間違いの疑い）
+    lost = _values("?")        # 所持ゼニーが読めないと、何回目か分からない
+    report = build_report([_record("a.jpg", _values("100")), _record("b.jpg", _values("96")), _record("c.jpg", unreadable),
+                           _record("d.jpg", doubtful), _record("e.jpg", _values("84")), _record("f.jpg", lost)], 4, tmp_path)
+    assert [(line, count, zeny, name) for line, count, zeny, name, _ in report.review] == [
+        (5, 3, 92, "c.jpg"), (6, 4, 88, "d.jpg"), (8, None, None, "f.jpg")]
+    assert "読み取れない値" in report.review[0][4] and "ありえる範囲" in report.review[1][4]
+    assert report.text.count("\n") == 8 and report.import_text.count("\n") == 5   # 取り込むのは 3 行だけ
+    assert any("d.jpg" in e and "ありえる範囲" in e for e in report.errors)   # CLI 用の一覧には今までどおり出る
+    assert report.batch_errors == []
 
     conn = get_connection(tmp_path / "test.db")
-    summary = import_block(conn, report.text, "ギルパレ脚", source=SOURCE_8BIT,
-                           unread_images={line: (f"D:/shots/{name}", zeny) for line, _, zeny, name in report.unread})
-    assert (summary.imported_count, summary.unread_count, len(summary.errors)) == (2, 2, 2)
+    summary = import_block(conn, report.import_text, "ギルパレ脚", source=SOURCE_8BIT, ocr_issues=report.batch_errors,
+                           review_images=[(count, zeny, f"D:/shots/{name}", reason)
+                                          for _, count, zeny, name, reason in report.review])
+    assert (summary.imported_count, summary.unread_count, summary.errors, summary.skipped_results) == (3, 3, [], [])
     errors = fetch_batch_errors(conn, summary.batch_id)
-    assert errors.unread == [(3, 92, "D:/shots/c.jpg"), (None, None, "D:/shots/d.jpg")]
-    assert errors.unparsable == [] and errors.total == list_batches(conn)[0].error_count == 2
+    assert errors.unread == [(3, 92, "D:/shots/c.jpg"), (4, 88, "D:/shots/d.jpg"), (None, None, "D:/shots/f.jpg")]
+    assert errors.unparsable == [] and errors.skipped == [] and errors.ocr == []
+    assert errors.total == list_batches(conn)[0].error_count == summary.error_count == 3
     conn.close()
+
+
+def test_too_many_images_needing_review_stops_the_import():
+    """確認が必要な画像が多すぎるバッチは、取り込まない（入力の違い・対応していない表示などの疑い）。"""
+    from app.ocr.image_import import too_many_to_review as stops
+
+    assert not stops(31, 7406)     # 別のユーザーの初めてのバッチ（0.4%）
+    assert not stops(5, 9)         # 枚数の少ないフォルダで数枚出ただけでは止めない
+    assert stops(780, 7507)        # 対応していない撮り方（10%）
+    assert stops(40, 100)
 
 
 def test_missing_shots_are_counted_once(tmp_path):
