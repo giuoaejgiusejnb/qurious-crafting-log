@@ -82,10 +82,6 @@ MATCH_THRESHOLD = {"default": (0.15, 0.2),
                    "money_glyph": (0.15, 1.0)}
 BLOCK_W = 16
 SIGNATURE_THRESHOLD = 0.3
-# ドックに入れて撮った画像（TV モード。テレビに繋がなくても同じ）の見分け方。見出し「傀異強化結果」の見本との違いは、
-# 携帯モードで 0.00〜0.01（開発者と別のユーザーの 7 バッチ）、ドックで 0.06〜0.07（開発者の 1 バッチ）。
-# ドックでは文字の描かれ方が少し違い、携帯モードで作った見本にスキル名のほとんどが当たらない
-DOCK_SIGNATURE_DISTANCE = 0.03
 MIN_INK = 40              # スキル名行の画素数がこれ未満ならスキル無し
 MIN_CONTRAST = 30         # 割合で決めるしきい値の下限（何も書かれていない欄でノイズを拾わないため）
 DIGIT_SHAPE = (20, 14)    # 数値の 1 文字（符号・数字）の切り出しサイズ
@@ -374,13 +370,11 @@ def block_distance(bank: np.ndarray, bits: np.ndarray, shape: tuple[int, int]) -
     return np.where(union > 0, 1.0 - inter / np.maximum(union, 1), 0.0).max(axis=1)
 
 
-def detect_screen(img: np.ndarray) -> tuple[str, float] | None:
-    """結果画面の種類と、その画面判定の見本との違い（0 が完全一致）を返す。結果画面でなければ None。"""
+def detect_screen(img: np.ndarray) -> str | None:
     for layout, sig in _signatures.items():
         bits = LAYOUTS[layout]["signature"].binarize(img)
-        distance = float(iou_distance(sig.reshape(1, -1), bits.reshape(-1))[0])
-        if distance < SIGNATURE_THRESHOLD:
-            return layout, distance
+        if iou_distance(sig.reshape(1, -1), bits.reshape(-1))[0] < SIGNATURE_THRESHOLD:
+            return layout
     return None
 
 
@@ -390,10 +384,8 @@ def extract(path: str) -> dict | None:
     if loaded is None:
         return None
     img, device = loaded
-    detected = detect_screen(img)
-    screen = detected[0] if detected else None
-    out = {"device": device, "screen": screen, "signature_distance": detected[1] if detected else None,
-           "crops": {}, "levels": {}, "money": [], "features": {}}
+    screen = detect_screen(img)
+    out = {"device": device, "screen": screen, "crops": {}, "levels": {}, "money": [], "features": {}}
     if screen is None:
         return out
     base = LAYOUTS[screen]["dy"]
@@ -1085,30 +1077,6 @@ def check_resolutions(paths: list[str], extracted: list[dict | None], template_d
         raise UnsupportedResolutionError(bad, supported)
 
 
-class DockedCaptureError(Exception):
-    """ドックに入れて撮った画像（TV モード）のバッチ。対応していないので、取込は行わない。"""
-
-    def __init__(self, docked: int, total: int) -> None:
-        self.docked, self.total = docked, total
-        super().__init__(
-            f"ドックに入れて撮った画像（TVモード）のようです（結果画面 {total} 枚のうち {docked} 枚）。"
-            "対応しているのは、携帯モードで撮った画像だけです。取込は行っていません"
-        )
-
-
-def check_handheld(extracted: list[dict | None]) -> None:
-    """結果画面の半分以上がドックで撮った画像なら DockedCaptureError にする（アプリの取込で使う）。
-
-    判定には「傀異強化結果」の見出しの画面（screen1）だけを使う（DOCK_SIGNATURE_DISTANCE はその見出しの値）。
-    ドックの画像は、スキル名のほとんどが見本に当たらず、読めない画像が何千枚も出る。見本との違いを大きく
-    許せば読めるが、取り違えの余地が残るので、対応しないことにした（2026-10-11）。
-    """
-    distances = [ex["signature_distance"] for ex in extracted if ex is not None and ex["screen"] == "screen1"]
-    docked = sum(d >= DOCK_SIGNATURE_DISTANCE for d in distances)
-    if distances and docked * 2 >= len(distances):
-        raise DockedCaptureError(docked, len(distances))
-
-
 @dataclass
 class OcrRun:
     report: Report
@@ -1350,11 +1318,8 @@ def start_reading(
     progress_callback: ProgressCallback | None = None,
     table: int | None = None,
     label_dir: Path | None = None,
-    handheld_only: bool = False,
 ) -> OcrSession:
     """画像を切り出して見本と照合する（結果はまだ作らない）。
-
-    handheld_only=True では、ドックに入れて撮った画像のバッチなら DockedCaptureError で止める（check_handheld）。
 
     label_dir を渡すと（アプリ）、template_dir の見本は読むだけで保存しない（OcrSession.bank）。
     use_processes=False ではスレッドで切り出す（exe 化したアプリではプロセスを起こせないことがあるため）。
@@ -1375,8 +1340,6 @@ def start_reading(
     t_extract = time.perf_counter() - start
     # 見本の無い解像度の画像は、照合すると見本がすべて新しくなってしまうので、照合の前に止める
     check_resolutions(paths, extracted, template_dir)
-    if handheld_only:
-        check_handheld(extracted)
 
     session = OcrSession(paths, extracted, base_slot, zenny_step, minus_skills, template_dir, table, label_dir)
     for n, (path, ex) in enumerate(zip(paths, extracted), start=1):

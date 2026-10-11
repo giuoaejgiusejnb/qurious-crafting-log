@@ -534,7 +534,7 @@ def build_import_view(
             # 画像読み取りの依存（numpy / OpenCV）は重いので、使うときだけ読み込む
             # （初回は数秒かかることがあり、その間に表示が変わらないと二度押されてしまう）
             from app.ocr.image_import import NoImagesError, start_image_reading
-            from app.ocr.kuijin_ocr import DockedCaptureError, UnsupportedResolutionError
+            from app.ocr.kuijin_ocr import UnsupportedResolutionError
         except Exception as exc:
             status_text.value = f"画像の読み取りに失敗しました: {exc}"
             set_busy(False)
@@ -547,14 +547,6 @@ def build_import_view(
             )
         except NoImagesError as exc:
             status_text.value = str(exc)
-            set_busy(False)
-            return
-        except DockedCaptureError as exc:
-            # ドックに入れて撮った画像には対応していない（DB にも見本にも何も保存しない）
-            status_text.value = (
-                f"{exc}。\nSwitch をドックから外して（携帯モードで）撮り直してください。"
-                "ドックに入れた状態では、テレビに繋いでいなくても、文字の描かれ方が変わります。"
-            )
             set_busy(False)
             return
         except UnsupportedResolutionError as exc:

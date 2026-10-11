@@ -177,23 +177,6 @@ def test_matching_is_not_loosened():
     assert slots.match(thin) == count and slots.labels[count] is None
 
 
-def test_docked_captures_are_rejected_in_the_app():
-    """ドックに入れて撮った画像（見出しの見本との違いが大きい）のバッチは、アプリでは取り込まない。"""
-    from app.ocr.kuijin_ocr import DOCK_SIGNATURE_DISTANCE, DockedCaptureError, check_handheld
-
-    def shots(distance: float, n: int) -> list[dict]:
-        return [{"screen": "screen1", "signature_distance": distance}] * n
-
-    handheld, docked = shots(0.01, 10), shots(0.065, 10)
-    assert 0.01 < DOCK_SIGNATURE_DISTANCE < 0.065
-    check_handheld([*handheld, None, {"screen": None, "signature_distance": None}])   # 読めない画像・結果画面以外は数えない
-    check_handheld([*handheld, *docked[:3]])     # 少し混ざっているだけなら止めない
-    check_handheld([])
-    with pytest.raises(DockedCaptureError) as exc_info:
-        check_handheld([*docked, *handheld[:2]])
-    assert (exc_info.value.docked, exc_info.value.total) == (10, 12)
-
-
 def test_app_reads_with_bundled_templates_only(tmp_path):
     """アプリ（label_dir あり）は同梱の見本だけで読み、保存もラベルの入力もしない。
 
