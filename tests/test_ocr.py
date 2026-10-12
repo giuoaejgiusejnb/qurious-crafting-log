@@ -326,6 +326,39 @@ def test_images_and_templates_under_non_ascii_paths(tmp_path):
     assert set(_signatures) == set(LAYOUTS)   # 画面判定の見本が読めている
 
 
+def test_missing_sign_is_decided_by_color():
+    """符号が読めなかった値（数字だけ）は、数字の色で符号を決める（緑 = プラス、赤 = マイナス）。
+
+    Switch 2 の TV モードでは、雷耐性の行の "-" が暗く描かれて二値化で消える。色が分からなければ読めない値のまま。
+    符号が読めている値・数字以外が混ざった値には使わない。
+    """
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import NO_SIGN, Region, read_number, value_color, with_sign_by_color
+
+    assert with_sign_by_color(NO_SIGN + "2", "red") == "-2" and with_sign_by_color(NO_SIGN + "12", "green") == "+12"
+    assert with_sign_by_color(NO_SIGN + "2", "") == "2?"
+    assert [with_sign_by_color(v, "red") for v in ("+2", "-", "+1+?", "1?", "+3")] == ["+2", "-", "+1+?", "1?", "+3"]
+
+    class Glyphs:   # どの文字も「2」と読む見本
+        labels = ["2"]
+
+        def match(self, glyph, source=None):
+            return 0
+
+    bits = np.zeros((22, 72), dtype=bool)
+    bits[4:16, 58:64] = True   # 数字 1 文字だけ（符号なし）
+    assert read_number(bits, Glyphs()) == NO_SIGN + "2"
+    bits[9:11, 50:55] = True   # 左に "-"
+    assert read_number(bits, Glyphs()) == "-2"
+
+    region = Region(0, 0, 72, 22, "max", 0.6, min_component=3, right_aligned=True)
+    for bgr, color in (((60, 60, 240), "red"), ((40, 230, 40), "green"), ((150, 150, 150), "")):
+        img = np.full((22, 72, 3), 20, dtype=np.uint8)
+        img[4:16, 58:64] = bgr
+        assert value_color(img, region, 0, region.ink(img, 0)) == color
+
+
 def _money_record(name: str, money: str, **changes):
     from app.ocr.kuijin_ocr import money_thousands
 
@@ -407,10 +440,11 @@ def test_detect_screen_with_additional_signature(tmp_path):
         _signatures.clear()
         _init_worker(templates)
         assert detect_screen(img) is None
+        bundled = len(_signatures["screen1"])
         save_signature("screen1_other", str(tmp_path / "other.png"), templates)
         _signatures.clear()
         _init_worker(templates)
-        assert len(_signatures["screen1"]) == 2 and detect_screen(img) == "screen1"
+        assert len(_signatures["screen1"]) == bundled + 1 and detect_screen(img) == "screen1"
     finally:
         _signatures.clear()
 

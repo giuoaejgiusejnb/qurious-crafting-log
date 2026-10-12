@@ -390,12 +390,16 @@ def extract(path: str) -> dict | None:
         return None
     img, device = loaded
     screen = detect_screen(img)
-    out = {"device": device, "screen": screen, "crops": {}, "levels": {}, "money": [], "features": {}}
+    out = {"device": device, "screen": screen, "crops": {}, "levels": {}, "money": [], "features": {},
+           "value_colors": {}}
     if screen is None:
         return out
     base = LAYOUTS[screen]["dy"]
     for field, (kind, region) in FIELDS.items():
-        out["crops"][field] = (kind, np.packbits(region.binarize(img, base)))
+        ink = region.ink(img, base)
+        out["crops"][field] = (kind, np.packbits(align(ink, region.min_component)))
+        if kind == "value":
+            out["value_colors"][field] = value_color(img, region, base, ink)
     for i in range(MAX_SKILLS):
         dy = base + SKILL_DY[i]
         name = NAME.binarize(img, dy)
@@ -619,7 +623,40 @@ def read_number(bits: np.ndarray, glyphs: TemplateBank, source: tuple[str, str] 
     # 2 つ続くことは無いので 1 つにまとめる
     while "--" in text:
         text = text.replace("--", "-")
+    if text.isdigit():
+        return NO_SIGN + text   # 符号が読めていない。数字の色が分かれば、それで符号を決める（with_sign_by_color）
     return checked_number(text or "-")
+
+
+# 数字は読めたが符号が見つからなかった値の印（値の見本のラベルの先頭に付ける。"?" を含むので、
+# そのまま外に出ても読めない値として扱われる）
+NO_SIGN = "±?"
+
+
+def value_color(img: np.ndarray, region: Region, dy: int, ink: np.ndarray) -> str:
+    """数値の欄の文字（ink = region.ink(img, dy)）の色。増えた値は緑（"green"）、減った値は赤（"red"）。
+    変化なしの灰色の "-" などは ""。"""
+    px = img[region.y0 + dy:region.y1 + dy, region.x0:region.x1][ink].astype(int)
+    if len(px) < 5:
+        return ""
+    b, g, r = np.median(px, axis=0)
+    if g > r + 60 and g > b + 60:
+        return "green"
+    if r > g + 60 and r > b + 60:
+        return "red"
+    return ""
+
+
+def with_sign_by_color(text: str, color: str) -> str:
+    """符号が読めていない値（NO_SIGN）の符号を、数字の色で決める。色が分からなければ、読めない値（数字 + "?"）。
+
+    Switch 2 の TV モードでは、雷耐性の行のマイナスの "-" が 2 行の画素にまたがって暗く描かれ、二値化で消える
+    （数字は残る）。増えた値は緑、減った値は赤で描かれるので、符号は色でも分かる。符号が読めている値には使わない。
+    """
+    if not text.startswith(NO_SIGN):
+        return text
+    digits = text[len(NO_SIGN):]
+    return {"green": "+", "red": "-"}.get(color, "") + digits + ("" if color in ("green", "red") else "?")
 
 
 def checked_number(text: str) -> str:
@@ -1448,7 +1485,7 @@ def finish_reading(session: OcrSession, save: bool = True) -> OcrRun:
                 if c in ids:
                     b, i = ids[c]
                     lab = b.labels[i]
-                    values[c] = "?" if lab is None else lab
+                    values[c] = "?" if lab is None else with_sign_by_color(lab, ex.get("value_colors", {}).get(c, ""))
                 else:
                     values[c] = ex["levels"].get(c, "")
             values["slot_base"], values["slot_add"] = str(session.base_slot), values.pop("slot")
