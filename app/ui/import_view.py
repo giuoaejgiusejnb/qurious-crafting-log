@@ -90,7 +90,7 @@ def build_import_view(
     status_text = ft.Text()
     # 画像取込で、確認が必要なため取り込まなかった画像 [(練成回数 or None, ゼニー or None, 画像のパス)] と、そのバッチ。
     # 取込のたびに入れ替える
-    unread_items: list[tuple[int | None, int | None, str]] = []
+    unread_items: list[tuple[int | None, int | None, str, int | None]] = []
     unread_batch: list[int | None] = [None]
 
     def on_show_unread(e: ft.Event[ft.Button]) -> None:
@@ -613,7 +613,7 @@ def build_import_view(
         # 確認が必要な行（読めない値がある・読み取った内容に疑わしい点がある）は取り込んでいない。
         # 何回目の練成かと画像を見てもらう（finish_import が出す「結果を表示しますか」の確認でも知らせるので、先に入れておく）
         by_name = {Path(path).name: str(Path(path).resolve()) for path in session.paths}
-        unread_items[:] = [(count, zeny, by_name[name]) for _, count, zeny, name, _ in run.report.review]
+        unread_items[:] = [(count, zeny, by_name[name], exact) for _, count, zeny, name, _, exact in run.report.review]
         unread_batch[0] = result.summary.batch_id
         finish_import(result.summary, label, extra)
         if unread_items:

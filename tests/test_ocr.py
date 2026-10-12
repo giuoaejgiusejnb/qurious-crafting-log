@@ -81,7 +81,7 @@ def test_rows_needing_review_are_not_imported(tmp_path):
     lost = _values("?")        # 所持ゼニーが読めないと、何回目か分からない
     report = build_report([_record("a.jpg", _values("100")), _record("b.jpg", _values("96")), _record("c.jpg", unreadable),
                            _record("d.jpg", doubtful), _record("e.jpg", _values("84")), _record("f.jpg", lost)], 4, tmp_path)
-    assert [(line, count, zeny, name) for line, count, zeny, name, _ in report.review] == [
+    assert [(line, count, zeny, name) for line, count, zeny, name, _, _ in report.review] == [
         (5, 3, 92, "c.jpg"), (6, 4, 88, "d.jpg"), (8, None, None, "f.jpg")]
     assert "読み取れない値" in report.review[0][4] and "ありえる範囲" in report.review[1][4]
     assert report.text.count("\n") == 8 and report.import_text.count("\n") == 5   # 取り込むのは 3 行だけ
@@ -90,11 +90,12 @@ def test_rows_needing_review_are_not_imported(tmp_path):
 
     conn = get_connection(tmp_path / "test.db")
     summary = import_block(conn, report.import_text, "ギルパレ脚", source=SOURCE_8BIT, ocr_issues=report.batch_errors,
-                           review_images=[(count, zeny, f"D:/shots/{name}", reason)
-                                          for _, count, zeny, name, reason in report.review])
+                           review_images=[(count, zeny, f"D:/shots/{name}", reason, exact)
+                                          for _, count, zeny, name, reason, exact in report.review])
     assert (summary.imported_count, summary.unread_count, summary.errors, summary.skipped_results) == (3, 3, [], [])
     errors = fetch_batch_errors(conn, summary.batch_id)
-    assert errors.unread == [(3, 92, "D:/shots/c.jpg"), (4, 88, "D:/shots/d.jpg"), (None, None, "D:/shots/f.jpg")]
+    assert errors.unread == [(3, 92, "D:/shots/c.jpg", None), (4, 88, "D:/shots/d.jpg", None),
+                             (None, None, "D:/shots/f.jpg", None)]
     assert errors.unparsable == [] and errors.skipped == [] and errors.ocr == []
     assert errors.total == list_batches(conn)[0].error_count == summary.error_count == 3
     conn.close()
@@ -325,12 +326,53 @@ def test_images_and_templates_under_non_ascii_paths(tmp_path):
     assert set(_signatures) == set(LAYOUTS)   # 画面判定の見本が読めている
 
 
-def test_small_money_is_read_by_last_three_digits(tmp_path):
-    """4 桁に満たない所持ゼニーは、下 3 桁が最初の画像と同じときだけ 0 千ゼニーと読む（ゼニーが尽きた最後の画像）。"""
+def _money_record(name: str, money: str, **changes):
     from app.ocr.kuijin_ocr import money_thousands
 
-    def record(name: str, money: str):
-        return _record(name, {**_values(money_thousands(money)), "money": money})
+    return _record(name, {**_values(money_thousands(money)), "money": money, **changes})
+
+
+def test_money_with_different_last_three_digits_needs_review(tmp_path):
+    """所持ゼニーの下 3 桁が、記録の中でいちばん多い値と違う画像は、取り込まずに見てもらう（読み間違いか、別の記録の画像）。
+
+    基準は最初の画像ではない（その 1 枚の読み間違いで、ほかの全部が食い違いにならないように）。
+    確認が必要な画像には、下 3 桁までの正確なゼニーを残す（見てもらう画面で、ゲームの画面と見比べるため）。
+    """
+    from app.core.history import fetch_batch_errors
+    from app.core.importer import SOURCE_8BIT, import_block
+    from app.db.connection import get_connection
+    from app.ui.unread_viewer import zeny_text
+
+    doubtful = _money_record("c.jpg", "92017", fire="+30")   # 耐性の増減としてありえない値
+    records = [_money_record("a.jpg", "100011"), _money_record("b.jpg", "96017"), doubtful,
+               _money_record("d.jpg", "88017"), _money_record("e.jpg", "84917"), _money_record("f.jpg", "80017")]
+    report = build_report(records, 4, tmp_path)
+    # 1 枚目（下 3 桁 011）と 5 枚目（917）は、何回目かを決めない。初期ゼニーは 2 枚目から求める
+    assert report.text.splitlines()[0] == "初期ゼニー,100"
+    assert [(count, zeny, name, exact) for _, count, zeny, name, _, exact in report.review] == [
+        (None, None, "a.jpg", None), (2, 92, "c.jpg", 92017), (None, None, "e.jpg", None)]
+    assert "下 3 桁" in report.review[0][4] and "100011" in report.review[0][4]
+    assert [line.split(",")[0] for line in report.import_text.splitlines()[2:]] == ["1", "3", "5"]
+    # 食い違う画像のゼニーは、減り方のチェックに使わない（「増えています」などは出ない）。その回は、
+    # ゼニーが読めない画像と同じく、撮れていない回として知らせる
+    assert report.batch_errors == ["1回分の画像がありません（撮り忘れの疑い）: d.jpg（88千ゼニー）→ f.jpg（80千ゼニー）"]
+
+    conn = get_connection(tmp_path / "test.db")
+    summary = import_block(conn, report.import_text, "ギルパレ脚", source=SOURCE_8BIT,
+                           review_images=[(count, zeny, f"D:/shots/{name}", reason, exact)
+                                          for _, count, zeny, name, reason, exact in report.review])
+    unread = fetch_batch_errors(conn, summary.batch_id).unread
+    assert unread == [(2, 92, "D:/shots/c.jpg", 92017), (None, None, "D:/shots/a.jpg", None),
+                      (None, None, "D:/shots/e.jpg", None)]
+    conn.close()
+    assert zeny_text(92, 92017) == "92,017" and zeny_text(58836, None) == "58,836千" and zeny_text(None, None) == "不明"
+
+
+def test_small_money_is_read_by_last_three_digits(tmp_path):
+    """4 桁に満たない所持ゼニーは、下 3 桁がほかの画像と同じときだけ 0 千ゼニーと読む（ゼニーが尽きた最後の画像）。"""
+    from app.ocr.kuijin_ocr import money_thousands
+
+    record = _money_record
 
     assert money_thousands("58836017") == "58836" and money_thousands("17") == "?" and money_thousands("?") == "?"
 
@@ -341,7 +383,7 @@ def test_small_money_is_read_by_last_three_digits(tmp_path):
     # 下 3 桁が違えば、数字が欠けた読み間違いかもしれないので、読めないまま
     report = build_report([record("a.jpg", "8017"), record("b.jpg", "4017"), record("c.jpg", "7")], 4, tmp_path)
     assert report.text.splitlines()[4].split(",")[:2] == ["?", "?"]
-    assert [name for _, _, _, name, _ in report.review] == ["c.jpg"]
+    assert [name for _, _, _, name, _, _ in report.review] == ["c.jpg"]
 
     # 比べる相手（4 桁以上のゼニー）が無ければ、読めないまま
     report = build_report([record("c.jpg", "17")], 4, tmp_path)

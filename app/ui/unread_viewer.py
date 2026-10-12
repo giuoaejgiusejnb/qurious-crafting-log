@@ -22,13 +22,25 @@ def open_in_explorer(path: str) -> None:
         subprocess.Popen(["explorer", os.path.normpath(target.parent)])
 
 
+def zeny_text(zeny: int | None, exact: int | None) -> str:
+    """ゼニーの表示。正確な値（下 3 桁まで）が分かればそれを、千単位の値しか無ければ「千」を付けて出す。
+
+    ほかの画面のゼニーは千単位（NX Macro Controller のテキストが千単位のため）。ここは画像読み取りでしか出ず、
+    ゲームの画面と見比べる場所なので、正確な値を出す。正確な値を保存していなかった頃のバッチは千単位しか無い。
+    """
+    if exact is not None:
+        return f"{exact:,}"
+    return f"{zeny:,}千" if zeny is not None else "不明"
+
+
 def show_unread_viewer(
     page: ft.Page,
-    items: list[tuple[int | None, int | None, str]],
+    items: list[tuple[int | None, int | None, str, int | None]],
     batch_id: int | None = None,
     on_close: Callable[[], None] | None = None,
 ) -> None:
-    """items（[(練成回数 or None, ゼニー or None, 画像のパス), ...]）を、回数の順に 1 枚ずつ表示する。
+    """items（[(練成回数 or None, ゼニー（千単位） or None, 画像のパス, 正確なゼニー or None), ...]）を、回数の順に
+    1 枚ずつ表示する。
 
     on_close は「閉じる」で閉じた後に呼ぶ（取込の直後に、続きの確認へ戻るため）。
     """
@@ -46,13 +58,13 @@ def show_unread_viewer(
     missing = ft.Text("", color=ft.Colors.RED_700, selectable=True, visible=False)
 
     def render() -> None:
-        count, zeny, path = items[position[0]]
+        count, zeny, path, exact = items[position[0]]
         where = f"バッチ #{batch_id} の" if batch_id is not None else ""
         title.value = f"{where}確認が必要な画像（{position[0] + 1} / {len(items)}）"
         headline.value = (
             (f"{count}回目" if count is not None else "回数不明")
             + "　　ゼニー："
-            + (str(zeny) if zeny is not None else "不明")
+            + zeny_text(zeny, exact)
         )
         path_button.content = path
         png = result_view_png(path)

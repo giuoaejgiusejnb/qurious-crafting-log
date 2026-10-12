@@ -132,7 +132,7 @@ def finish_image_import(
         progress_callback=(lambda d, t: progress_callback("import", d, t)) if progress_callback else None,
         source=SOURCE_8BIT,
         ocr_issues=run.report.batch_errors,
-        review_images=[(count, zeny, by_name[name], reason) for _, count, zeny, name, reason in review],
+        review_images=[(count, zeny, by_name[name], reason, exact) for _, count, zeny, name, reason, exact in review],
         image_dir=str(Path(session.paths[0]).resolve().parent) if session.paths else None,
     )
     return ImageImportResult(len(session.paths), run, summary)

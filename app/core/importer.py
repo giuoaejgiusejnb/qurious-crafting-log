@@ -135,7 +135,7 @@ def import_block(
     source: str = SOURCE_NX,
     ocr_issues: list[str] | None = None,
     spec_issues: list[str] | None = None,
-    review_images: list[tuple[int | None, int | None, str, str]] | None = None,
+    review_images: list[tuple[int | None, int | None, str, str, int | None]] | None = None,
     image_dir: str | None = None,
 ) -> ImportSummary:
     """result_logのテキストブロックをパースし、1つの取込バッチとしてDBに保存する。
@@ -148,8 +148,9 @@ def import_block(
     見つかった矛盾（kind='ocr'）、spec_issuesは抽選の仕様で作れない結果（kind='spec'）で、
     同じく import_issues に保存する。
     review_imagesは画像読み取りで確認が必要なため取り込まない画像
-    [(練成回数 or None, ゼニー or None, 画像のパス, 理由), ...]（textには入っていないこと）。kind='unread' として保存し
-    （detail は {"path": 画像のパス, "zeny": ゼニー, "reason": 理由} の JSON）、履歴タブで画像を見てもらう。
+    [(練成回数 or None, ゼニー or None, 画像のパス, 理由, 正確なゼニー or None), ...]（textには入っていないこと）。
+    kind='unread' として保存し（detail は {"path": 画像のパス, "zeny": ゼニー, "reason": 理由, "zeny_exact": 正確なゼニー}
+    の JSON。ゼニーは千単位、正確なゼニーは下3桁まで）、履歴タブで画像を見てもらう。
     その回数は「飛ばされている練成」には数えない。
     image_dirは画像読み取りで取り込んだ画像のフォルダ（履歴タブから画像の場所を開くために保存する）。
     """
@@ -161,7 +162,7 @@ def import_block(
     }
     # パースできなかった行の回数は「読み込みできなかった行」側で報告するため、
     # その欠番は「飛ばされている練成」からは除く。
-    review_counts = {count for count, _, _, _ in review_images or [] if count is not None}
+    review_counts = {item[0] for item in review_images or [] if item[0] is not None}
     skipped_results = [
         (count, zeny)
         for count, zeny in _find_skipped_results(results)
@@ -195,8 +196,9 @@ def import_block(
             VALUES (?, 'unread', NULL, ?, ?)
             """,
             [
-                (batch_id, count, json.dumps({"path": path, "zeny": zeny, "reason": reason}, ensure_ascii=False))
-                for count, zeny, path, reason in review_images
+                (batch_id, count, json.dumps({"path": path, "zeny": zeny, "reason": reason, "zeny_exact": exact},
+                                             ensure_ascii=False))
+                for count, zeny, path, reason, exact in review_images
             ],
         )
     if skipped_results:

@@ -75,8 +75,9 @@ class BatchErrors:
     # 取り込んだ画像のフォルダ（画像読み取りのバッチだけ。分からなければ None）
     image_dir: str | None = None
     # 画像読み取り（8bit）で、確認が必要なため取り込まなかった画像（読めない値がある・読み取った内容に疑わしい点がある）
-    # [(練成回数 or None, ゼニー or None, 画像のパス), ...]
-    unread: list[tuple[int | None, int | None, str]] = field(default_factory=list)
+    # [(練成回数 or None, ゼニー（千単位） or None, 画像のパス, 正確なゼニー or None), ...]
+    # 正確なゼニー（下3桁まで）は、保存していなかった頃のバッチでは None
+    unread: list[tuple[int | None, int | None, str, int | None]] = field(default_factory=list)
     # 画像読み取り（8bit）の自己チェックで見つかった矛盾の内容
     ocr: list[str] = field(default_factory=list)
     # 画像読み取り（8bit）の結果が抽選の仕様で作れないもの（読み間違いの疑い）の内容
@@ -111,7 +112,7 @@ def fetch_batch_errors(conn: sqlite3.Connection, batch_id: int) -> BatchErrors:
             errors.skipped.append((zeny_count, zeny))
         elif kind == "unread":
             info = json.loads(detail or "{}")
-            errors.unread.append((zeny_count, info.get("zeny"), info.get("path", "")))
+            errors.unread.append((zeny_count, info.get("zeny"), info.get("path", ""), info.get("zeny_exact")))
         elif kind == "ocr":
             gap = MISSING_SHOT_RE.match(detail or "")
             if gap is None:

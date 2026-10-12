@@ -42,6 +42,7 @@ import os
 import re
 import sys
 import time
+from collections import Counter
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
@@ -642,24 +643,35 @@ def read_money(glyphs: TemplateBank, ids: list[int]) -> str:
 
 
 def money_thousands(digits: str) -> str:
-    """所持金（read_money）を 1000 単位にする（下 3 桁は捨てる）。4 桁に満たなければ "?"（fill_small_money）。"""
+    """所持金（read_money）を 1000 単位にする（下 3 桁は捨てる）。4 桁に満たなければ "?"（check_money_tail）。"""
     return digits[:-3] if len(digits) > 3 else "?"
 
 
-def fill_small_money(values: list[dict]) -> None:
-    """4 桁に満たない所持ゼニーを、0 千ゼニーと読む（money_k を "0" にする）。
+def check_money_tail(values: list[dict]) -> None:
+    """所持ゼニーの下 3 桁を、記録の中でいちばん多い値と比べ、money_k を直す。
 
-    ゼニーが尽きるまで練成した記録の最後の画像は、所持ゼニーが 4 桁に満たない。1 回の練成で減るのは
-    千ゼニーの倍数なので、所持ゼニーの下 3 桁は 1 つの記録の中で変わらない。最初に読めた画像の下 3 桁と
-    同じ値のときだけ読む（数字が欠けて短くなっただけの読み間違いは、一致しないので "?" のまま）。
+    1 回の練成で減るのは千ゼニーの倍数なので、所持ゼニーの下 3 桁は 1 つの記録の中で変わらない。
+    - 下 3 桁が違う画像は、読み間違いか別の記録の画像なので、ゼニーを読めない値（"?"）にし、理由を
+      money_error に書く（何回目の練成かを決めず、確認が必要な画像になる）
+    - 4 桁に満たないゼニー（ゼニーが尽きるまで練成した記録の最後の画像）は、値が下 3 桁と同じなら 0 千ゼニーと
+      読む（数字が欠けて短くなっただけの読み間違いは、一致しないので "?" のまま）
+    基準を最初の画像にしないのは、その 1 枚の読み間違いで、ほかの全部が食い違いになるため。
     """
-    first = next((v["money"] for v in values if v.get("money", "").isdigit() and len(v["money"]) > 3), None)
-    if first is None:
+    tails = Counter(v["money"][-3:] for v in values if v.get("money", "").isdigit() and len(v["money"]) > 3)
+    if not tails:
         return
+    tail = tails.most_common(1)[0][0]
     for v in values:
         money = v.get("money", "")
-        if v["money_k"] == "?" and money.isdigit() and len(money) <= 3 and int(money) == int(first[-3:]):
-            v["money_k"] = "0"
+        if not money.isdigit():
+            continue
+        if len(money) <= 3:
+            if int(money) == int(tail):
+                v["money_k"] = "0"
+        elif money[-3:] != tail:
+            v["money_k"] = "?"
+            v["money_error"] = (f"所持ゼニー（{money}）の下 3 桁が、ほかの画像（{tail}）と違います"
+                                f"（読み間違いか、別の記録の画像の疑い）")
 
 
 # ---------------------------------------------------------------- 確認用
@@ -782,8 +794,9 @@ class Report:
     spec_errors: list[str] = field(default_factory=list)   # 抽選の仕様で作れない結果（読み間違いの疑い）
     # 確認が必要な行（アプリでは取り込まずに、画像を見てもらう）: 読めない値（"?"）がある行と、
     # その画像だけで分かる矛盾（check_consistency）・仕様違反（check_spec）のある行。
-    # (text の行番号〔1 始まり〕, 回数〔分からなければ None〕, ゼニー〔千単位。読めなければ None〕, 画像のファイル名, 理由)
-    review: list[tuple[int, int | None, int | None, str, str]] = field(default_factory=list)
+    # (text の行番号〔1 始まり〕, 回数〔分からなければ None〕, ゼニー〔千単位。読めなければ None〕, 画像のファイル名, 理由,
+    #  ゼニー〔下 3 桁までの正確な値。読めなければ None〕)
+    review: list[tuple[int, int | None, int | None, str, str, int | None]] = field(default_factory=list)
     # errors のうち、1 枚の画像の問題ではないもの（ゼニーの減り方の矛盾・同じ回の画像の食い違い）。
     # アプリでは、これだけを「画像読み取りの矛盾」として残す
     batch_errors: list[str] = field(default_factory=list)
@@ -797,12 +810,12 @@ def build_report(records: list, step_k: int, template_dir: Path,
     回数は所持金から求める: (初期ゼニー - ゼニー) / 1 回の金額。初期ゼニーは 1 枚目のゼニー + 1 回分。
     同じ回を複数枚撮った画像は 1 枚だけ残す。読めていない値（"?"）の無い画像を優先し、
     どちらも同じ条件なら先の 1 枚。結果画面以外の画像はここに来る前に除かれている。
-    ゼニーは千単位（下 3 桁は捨てる）。4 桁に満たないゼニーは、下 3 桁が最初の画像と同じなら 0 と読む
-    （fill_small_money。records の値の money_k を書き換える）。
+    ゼニーは千単位（下 3 桁は捨てる）。下 3 桁がほかの画像と違うゼニーは読めない値にし、4 桁に満たない
+    ゼニーは下 3 桁と同じなら 0 と読む（check_money_tail。records の値の money_k を書き換える）。
     table（抽選テーブル）を渡したときは、残した行が抽選の仕様で作れるかも調べる（spec_errors）。
     """
     rows = [(name, ex["screen"], v) for name, ex, v in records if v is not None]
-    fill_small_money([v for _, _, v in rows])
+    check_money_tail([v for _, _, v in rows])
     checker = SpecChecker(table, minus_skills) if table is not None else None
     first = next((v["money_k"] for _, _, v in rows if "?" not in v["money_k"]), None)
     init = int(first) + step_k if first is not None else None
@@ -817,7 +830,7 @@ def build_report(records: list, step_k: int, template_dir: Path,
         body = report_row(v, screen, hidden)
         if init is None or "?" in v["money_k"]:
             count = "?"
-            warnings.append(f"{name}: 所持ゼニーが読めないため、何回目の練成か分かりません")
+            warnings.append(f"{name}: " + v.get("money_error", "所持ゼニーが読めないため、何回目の練成か分かりません"))
         else:
             spent = init - int(v["money_k"])
             if spent <= 0 or spent % step_k:
@@ -853,7 +866,9 @@ def build_report(records: list, step_k: int, template_dir: Path,
     # 確認が必要な行と、その理由（lines の位置ごと）
     reasons: dict[int, list[str]] = {}
     for i, (c, z, b) in enumerate(lines):
-        if "?" in c + z + "".join(b):
+        if "money_error" in kept[i][2]:
+            reasons.setdefault(i, []).append(kept[i][2]["money_error"])
+        elif "?" in c + z + "".join(b):
             reasons.setdefault(i, []).append("読み取れない値があります")
     index_of = {name: i for i, (name, _, _) in enumerate(kept)}
     for name, message in consistency:
@@ -862,8 +877,12 @@ def build_report(records: list, step_k: int, template_dir: Path,
     for i, message in spec:
         reasons.setdefault(i, []).append(message)
     # text の先頭 2 行は初期ゼニーと見出しなので、lines の i 番目は i + 3 行目
+    def exact_money(i: int) -> int | None:
+        money = kept[i][2].get("money", "")
+        return int(money) if money.isdigit() and "?" not in lines[i][1] else None
+
     review = [(i + 3, None if lines[i][0] == "?" else int(lines[i][0]), None if "?" in lines[i][1] else int(lines[i][1]),
-               kept[i][0], " / ".join(reasons[i])) for i in sorted(reasons)]
+               kept[i][0], " / ".join(reasons[i]), exact_money(i)) for i in sorted(reasons)]
     import_text = head + "".join(",".join([c, z, *b]) + "\n" for i, (c, z, b) in enumerate(lines) if i not in reasons)
     return Report(text, errors, len(lines), dup, [message for _, message in spec], review, conflicts + sequence,
                   import_text)
