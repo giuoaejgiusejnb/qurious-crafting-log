@@ -229,7 +229,7 @@ def value_region(y: int) -> Region:
 
 # 画面の種類。上から順に判定するので、見本が他の画面にも一致しうるもの（screen1 の見出しは
 # screen2 にもある）は後ろに置く。dy は下の座標（screen1 基準）からの縦方向のずれ。
-# 見本は --save-signature <名前> <画像> で作る。
+# 見本は --save-signature <名前> <画像> で作る（別の描かれ方の見本を足すときは <名前>_<描かれ方>）。
 LAYOUTS: dict[str, dict] = {
     # 強化後のステータスの下に「◀ L 1/2 R ▶」の切り替えがあり、以下が 25 画素下がる画面
     "screen2": {"signature": Region(570, 156, 612, 178, "min", 100), "dy": 25},
@@ -336,6 +336,8 @@ def result_view_png(path: str) -> bytes | None:
     return buf.tobytes() if ok else None
 
 
+# 画面の種類ごとの見本（1 枚以上）。文字の描かれ方は本体とモードで違うので、描かれ方ごとに 1 枚ずつ持つ:
+# {layout}.png（携帯モード。初代の Switch のドックもこれに当たる）と {layout}_{名前}.png（Switch 2 の TV モードなど）
 _signatures: dict[str, np.ndarray] = {}
 
 
@@ -345,10 +347,12 @@ def signature_dir(template_dir: Path) -> Path:
 
 def _init_worker(template_dir: Path) -> None:
     for layout in LAYOUTS:
-        p = signature_dir(template_dir) / f"{layout}.png"
-        sig = imread(p, cv2.IMREAD_GRAYSCALE) if p.exists() else None
-        if sig is not None:
-            _signatures[layout] = sig > 0
+        d = signature_dir(template_dir)
+        sigs = [imread(p, cv2.IMREAD_GRAYSCALE) for p in [d / f"{layout}.png", *sorted(d.glob(f"{layout}_*.png"))]
+                if p.exists()]
+        sigs = [sig.reshape(-1) > 0 for sig in sigs if sig is not None]
+        if sigs:
+            _signatures[layout] = np.array(sigs)
 
 
 def iou_distance(bank: np.ndarray, bits: np.ndarray) -> np.ndarray:
@@ -371,9 +375,9 @@ def block_distance(bank: np.ndarray, bits: np.ndarray, shape: tuple[int, int]) -
 
 
 def detect_screen(img: np.ndarray) -> str | None:
-    for layout, sig in _signatures.items():
+    for layout, sigs in _signatures.items():
         bits = LAYOUTS[layout]["signature"].binarize(img)
-        if iou_distance(sig.reshape(1, -1), bits.reshape(-1))[0] < SIGNATURE_THRESHOLD:
+        if iou_distance(sigs, bits.reshape(-1)).min() < SIGNATURE_THRESHOLD:
             return layout
     return None
 
@@ -629,12 +633,33 @@ def checked_number(text: str) -> str:
 
 
 def read_money(glyphs: TemplateBank, ids: list[int]) -> str:
-    """所持金を 1000 単位で返す（下 3 桁は捨てる）。ラベル "" の文字はノイズとして無視、未設定は "?"。"""
+    """所持金の数字をそのまま返す（"58836017"）。ラベル "" の文字はノイズとして無視、未設定は "?"。"""
     labels = [glyphs.labels[i] for i in ids]
     if any(lab is None for lab in labels):
         return "?"
     digits = "".join(lab or "" for lab in labels)
-    return digits[:-3] if len(digits) > 3 and digits.isdigit() else "?"
+    return digits if digits.isdigit() else "?"
+
+
+def money_thousands(digits: str) -> str:
+    """所持金（read_money）を 1000 単位にする（下 3 桁は捨てる）。4 桁に満たなければ "?"（fill_small_money）。"""
+    return digits[:-3] if len(digits) > 3 else "?"
+
+
+def fill_small_money(values: list[dict]) -> None:
+    """4 桁に満たない所持ゼニーを、0 千ゼニーと読む（money_k を "0" にする）。
+
+    ゼニーが尽きるまで練成した記録の最後の画像は、所持ゼニーが 4 桁に満たない。1 回の練成で減るのは
+    千ゼニーの倍数なので、所持ゼニーの下 3 桁は 1 つの記録の中で変わらない。最初に読めた画像の下 3 桁と
+    同じ値のときだけ読む（数字が欠けて短くなっただけの読み間違いは、一致しないので "?" のまま）。
+    """
+    first = next((v["money"] for v in values if v.get("money", "").isdigit() and len(v["money"]) > 3), None)
+    if first is None:
+        return
+    for v in values:
+        money = v.get("money", "")
+        if v["money_k"] == "?" and money.isdigit() and len(money) <= 3 and int(money) == int(first[-3:]):
+            v["money_k"] = "0"
 
 
 # ---------------------------------------------------------------- 確認用
@@ -772,10 +797,12 @@ def build_report(records: list, step_k: int, template_dir: Path,
     回数は所持金から求める: (初期ゼニー - ゼニー) / 1 回の金額。初期ゼニーは 1 枚目のゼニー + 1 回分。
     同じ回を複数枚撮った画像は 1 枚だけ残す。読めていない値（"?"）の無い画像を優先し、
     どちらも同じ条件なら先の 1 枚。結果画面以外の画像はここに来る前に除かれている。
-    ゼニーは千単位（下 3 桁は捨てる）。
+    ゼニーは千単位（下 3 桁は捨てる）。4 桁に満たないゼニーは、下 3 桁が最初の画像と同じなら 0 と読む
+    （fill_small_money。records の値の money_k を書き換える）。
     table（抽選テーブル）を渡したときは、残した行が抽選の仕様で作れるかも調べる（spec_errors）。
     """
     rows = [(name, ex["screen"], v) for name, ex, v in records if v is not None]
+    fill_small_money([v for _, _, v in rows])
     checker = SpecChecker(table, minus_skills) if table is not None else None
     first = next((v["money_k"] for _, _, v in rows if "?" not in v["money_k"]), None)
     init = int(first) + step_k if first is not None else None
@@ -1408,7 +1435,8 @@ def finish_reading(session: OcrSession, save: bool = True) -> OcrRun:
             values["slot_base"], values["slot_add"] = str(session.base_slot), values.pop("slot")
             values["cost"] = calc_cost(values)
             money_bank, money_ids = ids["money"]
-            values["money_k"] = read_money(money_bank, money_ids)
+            values["money"] = read_money(money_bank, money_ids)
+            values["money_k"] = money_thousands(values["money"])
         records.append((Path(path).name, ex, values))
 
     report = build_report(records, session.zenny_step // 1000, session.template_dir, session.minus_skills,
@@ -1446,7 +1474,8 @@ def save_signature(layout: str, path: str, template_dir: Path) -> None:
     loaded = load_image(path)
     if loaded is None:
         sys.exit(f"画像を読み込めません: {path}")
-    bits = LAYOUTS[layout]["signature"].binarize(loaded[0])
+    # layout は "screen1" か、描かれ方の名前を付けた "screen1_switch2_tv" など（_init_worker）
+    bits = LAYOUTS[layout.split("_", 1)[0]]["signature"].binarize(loaded[0])
     sig_dir = signature_dir(template_dir)
     sig_dir.mkdir(parents=True, exist_ok=True)
     imwrite(sig_dir / f"{layout}.png", bits.astype(np.uint8) * 255)

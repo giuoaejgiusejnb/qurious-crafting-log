@@ -325,6 +325,54 @@ def test_images_and_templates_under_non_ascii_paths(tmp_path):
     assert set(_signatures) == set(LAYOUTS)   # 画面判定の見本が読めている
 
 
+def test_small_money_is_read_by_last_three_digits(tmp_path):
+    """4 桁に満たない所持ゼニーは、下 3 桁が最初の画像と同じときだけ 0 千ゼニーと読む（ゼニーが尽きた最後の画像）。"""
+    from app.ocr.kuijin_ocr import money_thousands
+
+    def record(name: str, money: str):
+        return _record(name, {**_values(money_thousands(money)), "money": money})
+
+    assert money_thousands("58836017") == "58836" and money_thousands("17") == "?" and money_thousands("?") == "?"
+
+    report = build_report([record("a.jpg", "8017"), record("b.jpg", "4017"), record("c.jpg", "17")], 4, tmp_path)
+    assert [line.split(",")[:2] for line in report.text.splitlines()[2:]] == [["1", "8"], ["2", "4"], ["3", "0"]]
+    assert report.errors == [] and report.review == []
+
+    # 下 3 桁が違えば、数字が欠けた読み間違いかもしれないので、読めないまま
+    report = build_report([record("a.jpg", "8017"), record("b.jpg", "4017"), record("c.jpg", "7")], 4, tmp_path)
+    assert report.text.splitlines()[4].split(",")[:2] == ["?", "?"]
+    assert [name for _, _, _, name, _ in report.review] == ["c.jpg"]
+
+    # 比べる相手（4 桁以上のゼニー）が無ければ、読めないまま
+    report = build_report([record("c.jpg", "17")], 4, tmp_path)
+    assert report.text.splitlines()[2].split(",")[:2] == ["?", "?"]
+
+
+def test_detect_screen_with_additional_signature(tmp_path):
+    """画面判定の見本は、画面の種類ごとに何枚でも持てる（描かれ方の違う本体・モードの分。{layout}_{名前}.png）。"""
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import LAYOUTS, _init_worker, _signatures, detect_screen, imwrite, save_signature
+
+    # 同梱の見本のどれにも似ていない見出し（白い縦の棒）の画像
+    img = np.full((720, 1280, 3), 20, dtype=np.uint8)
+    region = LAYOUTS["screen1"]["signature"]
+    img[region.y0 + 4:region.y1 - 4, region.x0 + 10:region.x0 + 150:12] = 255
+    imwrite(tmp_path / "other.png", img)
+
+    templates = _copy_templates(tmp_path / "templates")
+    try:
+        _signatures.clear()
+        _init_worker(templates)
+        assert detect_screen(img) is None
+        save_signature("screen1_other", str(tmp_path / "other.png"), templates)
+        _signatures.clear()
+        _init_worker(templates)
+        assert len(_signatures["screen1"]) == 2 and detect_screen(img) == "screen1"
+    finally:
+        _signatures.clear()
+
+
 def test_build_report_marks_hidden_minus(tmp_path):
     """結果画面２で写っていないスキルがすべてマイナスと確定したら、印「何らかのマイナススキル」を付け、マイナスを「有」にする。"""
     values = _values("100", "逆恨み", "+1")
