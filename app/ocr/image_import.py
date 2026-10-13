@@ -134,6 +134,8 @@ def finish_image_import(
         ocr_issues=run.report.batch_errors,
         review_images=[(count, zeny, by_name[name], reason, exact) for _, count, zeny, name, reason, exact in review],
         image_dir=str(Path(session.paths[0]).resolve().parent) if session.paths else None,
+        image_names=run.report.image_names,
+        zeny_tail=run.report.money_tail,
     )
     return ImageImportResult(len(session.paths), run, summary)
 

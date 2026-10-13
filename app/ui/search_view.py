@@ -14,6 +14,7 @@ from app.core.search import (
     count_results,
     fetch_distinct_import_dates,
     fetch_distinct_labels,
+    fetch_result_images,
     fetch_skill_breakdown,
     search_results,
 )
@@ -22,6 +23,7 @@ from app.core.skill_registry import SkillRegistry
 from app.core.skill_sets import get_skill_set, list_skill_set_names
 from app.db.connection import get_connection
 from app.ui.skills_display import build_skills_wrap
+from app.ui.unread_viewer import image_button, show_result_image_viewer
 
 _UNSELECTED = "__unselected__"
 _PAGE_SIZE = 200
@@ -481,8 +483,22 @@ def build_search_view(
         try:
             positive_color = get_positive_skill_color(conn)
             negative_color = get_negative_skill_color(conn)
+            images = fetch_result_images(conn, [row.id for row in rows])
         finally:
             conn.close()
+
+        # 画像のある行（画像読み取りで取り込んだ結果）には、画像を見るボタンを出す。
+        # 画像の画面では、この一覧の並びのまま前後の行の画像に移れる
+        with_image = [row for row in rows if row.id in images]
+        image_items = [(row.zeny_count, row.zeny, images[row.id].path, images[row.id].zeny_exact) for row in with_image]
+        image_index = {row.id: i for i, row in enumerate(with_image)}
+
+        def image_cell(result_id: int) -> ft.Control:
+            if result_id not in image_index:
+                return ft.Container(width=40)
+            return ft.Container(
+                image_button(lambda: show_result_image_viewer(page, image_items, image_index[result_id])), width=40
+            )
 
         header = ft.Row(
             [
@@ -495,6 +511,7 @@ def build_search_view(
                 ft.Text("バッチ・防具", width=130, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=90, weight=ft.FontWeight.BOLD),
                 ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
+                ft.Text("画像", width=40, weight=ft.FontWeight.BOLD),
             ]
         )
         results_list.controls.append(header)
@@ -525,9 +542,10 @@ def build_search_view(
                             # まとめ、取込日時は月日と時分だけにする（正確な日時は履歴タブで見られる）
                             ft.Text(f"#{row.batch_id} {row.label or ''}".strip(), width=130),
                             ft.Text(_short_datetime(row.imported_at), width=90, tooltip=row.imported_at),
-                            make_collected_checkbox(
-                                row.id, row.batch_id, bool(row.collected)
+                            ft.Container(
+                                make_collected_checkbox(row.id, row.batch_id, bool(row.collected)), width=60
                             ),
+                            image_cell(row.id),
                         ]
                     ),
                     # ゼブラストライプ: 1行おきに背景色を変えて行を目で追いやすくする

@@ -8,9 +8,10 @@ from app.core.collection import (
     fetch_collected_in_batch,
     set_collected,
 )
-from app.core.search import fetch_skill_breakdown
+from app.core.search import fetch_result_images, fetch_skill_breakdown
 from app.db.connection import get_connection
 from app.ui.skills_display import build_skills_wrap
+from app.ui.unread_viewer import image_button, show_result_image_viewer
 
 _PANEL_WIDTH = 260
 _SKILLS_WRAP_WIDTH = 220
@@ -63,8 +64,19 @@ def build_collection_panel(
         try:
             rows = fetch_collected_in_batch(conn, batch_id)
             breakdown = fetch_skill_breakdown(conn, [r.id for r in rows])
+            images = fetch_result_images(conn, [r.id for r in rows])
         finally:
             conn.close()
+
+        # 画像のある行（画像読み取りで取り込んだ結果）には、画像を見るボタンを出す
+        with_image = [r for r in rows if r.id in images]
+        image_items = [(r.zeny_count, r.zeny, images[r.id].path, images[r.id].zeny_exact) for r in with_image]
+        image_index = {r.id: i for i, r in enumerate(with_image)}
+
+        def image_controls(result_id: int) -> list[ft.Control]:
+            if result_id not in image_index:
+                return []
+            return [image_button(lambda: show_result_image_viewer(page, image_items, image_index[result_id]))]
 
         status_text.value = f"バッチ #{batch_id}: 回収予定{len(rows)}件"
 
@@ -90,7 +102,8 @@ def build_collection_panel(
                                         f"練成{row.zeny_count}回目",
                                         weight=ft.FontWeight.BOLD,
                                     ),
-                                    make_collected_checkbox(row.id, batch_id),
+                                    ft.Row([*image_controls(row.id), make_collected_checkbox(row.id, batch_id)],
+                                           spacing=0, tight=True),
                                 ],
                                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
                             ),

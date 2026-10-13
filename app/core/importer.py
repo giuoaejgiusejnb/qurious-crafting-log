@@ -137,6 +137,8 @@ def import_block(
     spec_issues: list[str] | None = None,
     review_images: list[tuple[int | None, int | None, str, str, int | None]] | None = None,
     image_dir: str | None = None,
+    image_names: dict[int, str] | None = None,
+    zeny_tail: int | None = None,
 ) -> ImportSummary:
     """result_logのテキストブロックをパースし、1つの取込バッチとしてDBに保存する。
 
@@ -153,6 +155,9 @@ def import_block(
     の JSON。ゼニーは千単位、正確なゼニーは下3桁まで）、履歴タブで画像を見てもらう。
     その回数は「飛ばされている練成」には数えない。
     image_dirは画像読み取りで取り込んだ画像のフォルダ（履歴タブから画像の場所を開くために保存する）。
+    image_namesは画像読み取りで、練成回数ごとの画像のファイル名（{練成回数: ファイル名}）。results.image_name に
+    保存し、検索結果や回収の画面から、その結果の画像を見られるようにする。
+    zeny_tailは画像読み取りの所持ゼニーの下3桁（textのゼニーは千単位。画像の画面で正確な値を出すために保存する）。
     """
     parsed, errors = parse_result_log_block(text)
     results, dropped_duplicate_count = _dedupe_consecutive_duplicates(parsed)
@@ -171,9 +176,9 @@ def import_block(
 
     imported_at = dt.datetime.now().isoformat(timespec="seconds")
     cur = conn.execute(
-        "INSERT INTO import_batches (imported_at, label, row_count, errors_analyzed, source, image_dir) "
-        "VALUES (?, ?, ?, 1, ?, ?)",
-        (imported_at, label, len(results), source, image_dir),
+        "INSERT INTO import_batches (imported_at, label, row_count, errors_analyzed, source, image_dir, zeny_tail) "
+        "VALUES (?, ?, ?, 1, ?, ?, ?)",
+        (imported_at, label, len(results), source, image_dir, zeny_tail),
     )
     batch_id = cur.lastrowid
     assert batch_id is not None  # INSERT直後なので必ず採番されている
@@ -235,8 +240,8 @@ def import_block(
             """
             INSERT INTO results (
                 batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost,
-                has_deficiency, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                has_deficiency, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum, image_name
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 batch_id,
@@ -251,6 +256,7 @@ def import_block(
                 mask_lo,
                 mask_hi,
                 skill_sum,
+                (image_names or {}).get(result.zeny_count),
             ),
         )
         result_id = cur.lastrowid

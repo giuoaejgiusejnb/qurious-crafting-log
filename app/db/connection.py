@@ -28,6 +28,10 @@ def _migrate(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE results ADD COLUMN collected INTEGER NOT NULL DEFAULT 0")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_results_collected ON results(collected)")
 
+    # 画像読み取り（8bit）で、この結果を読み取った画像のファイル名。この列の追加前のバッチと、テキストの取込は NULL
+    if "image_name" not in existing_columns:
+        conn.execute("ALTER TABLE results ADD COLUMN image_name TEXT")
+
     # 取込時にエラー検出（読込失敗・幽霊行・欠番）を行ったか。機能追加前の既存バッチは0のまま。
     batch_columns = {
         row[1] for row in conn.execute("PRAGMA table_info(import_batches)").fetchall()
@@ -42,6 +46,9 @@ def _migrate(conn: sqlite3.Connection) -> None:
     # 画像読み取り（8bit）で取り込んだ画像のフォルダ。この列の追加前のバッチと、テキストの取込は NULL
     if "image_dir" not in batch_columns:
         conn.execute("ALTER TABLE import_batches ADD COLUMN image_dir TEXT")
+    # 画像読み取り（8bit）の所持ゼニーの下3桁（画像の画面で、千単位の results.zeny を正確な値にして出すため）
+    if "zeny_tail" not in batch_columns:
+        conn.execute("ALTER TABLE import_batches ADD COLUMN zeny_tail INTEGER")
 
     conn.commit()
 

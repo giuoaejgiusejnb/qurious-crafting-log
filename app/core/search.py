@@ -1,5 +1,6 @@
 import sqlite3
 from dataclasses import dataclass, field
+from pathlib import Path
 
 MIN_THRESHOLD = 1
 MAX_THRESHOLD = 4
@@ -191,6 +192,39 @@ def fetch_skill_breakdown(
     for result_id, name, value in rows:
         breakdown.setdefault(result_id, []).append((name, value))
     return breakdown
+
+
+@dataclass
+class ResultImage:
+    """結果を読み取った画像。画像の画面（app/ui/unread_viewer.py）に渡す。"""
+
+    path: str
+    # 所持ゼニーの下3桁までの正確な値（results.zeny は千単位）。下3桁を保存していないバッチでは None
+    zeny_exact: int | None
+
+
+def fetch_result_images(conn: sqlite3.Connection, result_ids: list[int]) -> dict[int, ResultImage]:
+    """result_idごとの、その結果を読み取った画像（画像のある結果だけ）。
+
+    画像読み取り（8bit）で、画像のファイル名を保存するようになってから取り込んだ結果にだけある。
+    パスは取り込んだときのフォルダのものなので、画像を移動・削除していると開けない。
+    """
+    if not result_ids:
+        return {}
+    placeholders = ",".join("?" * len(result_ids))
+    rows = conn.execute(
+        f"""
+        SELECT r.id, b.image_dir, r.image_name, r.zeny, b.zeny_tail
+        FROM results r
+        JOIN import_batches b ON b.id = r.batch_id
+        WHERE r.id IN ({placeholders}) AND r.image_name IS NOT NULL AND b.image_dir IS NOT NULL
+        """,
+        result_ids,
+    ).fetchall()
+    return {
+        result_id: ResultImage(str(Path(image_dir) / name), None if tail is None else zeny * 1000 + tail)
+        for result_id, image_dir, name, zeny, tail in rows
+    }
 
 
 def fetch_distinct_labels(conn: sqlite3.Connection) -> list[str]:

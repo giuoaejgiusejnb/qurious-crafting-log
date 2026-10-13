@@ -326,6 +326,41 @@ def test_images_and_templates_under_non_ascii_paths(tmp_path):
     assert set(_signatures) == set(LAYOUTS)   # 画面判定の見本が読めている
 
 
+def test_result_rows_keep_their_image(tmp_path):
+    """取り込んだ結果ごとに、読み取った画像のファイル名を残す（検索結果や回収の画面から、その画像を見るため）。
+
+    同じ回の重複は残した方の画像、確認が必要で取り込まなかった行は対象外。テキストの取込には画像が無い。
+    """
+    from app.core.importer import SOURCE_8BIT, import_block
+    from app.core.search import ResultImage, SearchParams, fetch_result_images, search_results
+    from app.db.connection import get_connection
+
+    unreadable = _money_record("c.jpg", "92017", water="+?", cost="?")
+    report = build_report([_money_record("a.jpg", "100017"), _money_record("a2.jpg", "100017"),
+                           _money_record("b.jpg", "96017"), unreadable], 4, tmp_path)
+    assert report.image_names == {1: "a.jpg", 2: "b.jpg"} and report.money_tail == 17
+
+    conn = get_connection(tmp_path / "test.db")
+    image_batch = import_block(conn, report.import_text, "ギルパレ脚", source=SOURCE_8BIT, image_dir="D:/shots",
+                               image_names=report.image_names, zeny_tail=report.money_tail)
+    # 下 3 桁を保存していなかった頃のバッチ（正確なゼニーは出せない）と、テキストの取込（画像が無い）
+    old_batch = import_block(conn, report.import_text, "ギルパレ脚", source=SOURCE_8BIT, image_dir="D:/old",
+                             image_names=report.image_names)
+    text_batch = import_block(conn, report.import_text, "ギルパレ脚")
+    rows = search_results(conn, SearchParams())
+    images = fetch_result_images(conn, [row.id for row in rows])
+    assert {(row.batch_id, row.zeny_count): images.get(row.id) for row in rows} == {
+        (image_batch.batch_id, 1): ResultImage(str(Path("D:/shots") / "a.jpg"), 100017),
+        (image_batch.batch_id, 2): ResultImage(str(Path("D:/shots") / "b.jpg"), 96017),
+        (old_batch.batch_id, 1): ResultImage(str(Path("D:/old") / "a.jpg"), None),
+        (old_batch.batch_id, 2): ResultImage(str(Path("D:/old") / "b.jpg"), None),
+        (text_batch.batch_id, 1): None, (text_batch.batch_id, 2): None}
+    conn.close()
+
+    # ゼニーの数字を持たない記録（下 3 桁が分からない）では None
+    assert build_report([_record("a.jpg", _values("100"))], 4, tmp_path).money_tail is None
+
+
 def test_missing_sign_is_decided_by_color():
     """符号が読めなかった値（数字だけ）は、数字の色で符号を決める（緑 = プラス、赤 = マイナス）。
 

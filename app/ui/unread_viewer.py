@@ -1,7 +1,11 @@
-"""画像読み取り（8bit）で、確認が必要なため取り込まなかった画像を 1 枚ずつ見てもらうダイアログ。
+"""画像読み取り（8bit）の画像を 1 枚ずつ見てもらうダイアログ。
 
-読めない値がある行や、読み取った内容に疑わしい点がある行は DB に入れない（検索にも出ない）。代わりに、
-何回目の練成か・ゼニー・画像を見せて、ユーザーに直接確かめてもらう（何が疑わしいかは出さない。画像に答えがある）。画像は取り込んだときのフォルダから読むので、移動・削除していると表示できない。
+- 確認が必要なため取り込まなかった画像（show_unread_viewer）: 読めない値がある行や、読み取った内容に疑わしい点が
+  ある行は DB に入れない（検索にも出ない）。代わりに、何回目の練成か・ゼニー・画像を見せて、ユーザーに直接
+  確かめてもらう（何が疑わしいかは出さない。画像に答えがある）
+- 取り込んだ結果の画像（show_result_image_viewer）: 検索結果や回収の画面から、その結果を読み取った画像を見る
+
+画像は取り込んだときのフォルダから読むので、移動・削除していると表示できない。
 """
 
 import os
@@ -10,6 +14,9 @@ from pathlib import Path
 from typing import Callable
 
 import flet as ft
+
+# (練成回数 or None, ゼニー（千単位） or None, 画像のパス, 正確なゼニー or None)
+ImageItem = tuple[int | None, int | None, str, int | None]
 
 
 def open_in_explorer(path: str) -> None:
@@ -33,22 +40,50 @@ def zeny_text(zeny: int | None, exact: int | None) -> str:
     return f"{zeny:,}千" if zeny is not None else "不明"
 
 
+def image_button(on_click: Callable[[], None]) -> ft.IconButton:
+    """結果の行に置く、その結果の画像を見るボタン。"""
+    return ft.IconButton(icon=ft.Icons.IMAGE_OUTLINED, icon_size=18, tooltip="この結果の画像を見る",
+                         on_click=lambda e: on_click())
+
+
 def show_unread_viewer(
     page: ft.Page,
-    items: list[tuple[int | None, int | None, str, int | None]],
+    items: list[ImageItem],
     batch_id: int | None = None,
     on_close: Callable[[], None] | None = None,
 ) -> None:
-    """items（[(練成回数 or None, ゼニー（千単位） or None, 画像のパス, 正確なゼニー or None), ...]）を、回数の順に
-    1 枚ずつ表示する。
+    """確認が必要なため取り込まなかった画像を、回数の順に 1 枚ずつ表示する。
 
     on_close は「閉じる」で閉じた後に呼ぶ（取込の直後に、続きの確認へ戻るため）。
     """
+    where = f"バッチ #{batch_id} の" if batch_id is not None else ""
+    _show_viewer(
+        page,
+        sorted(items, key=lambda item: (item[0] is None, item[0] or 0, item[2])),
+        f"{where}確認が必要な画像",
+        "読み取れない値があったか、読み取った内容に疑わしい点があったため、この結果は取り込んでいません"
+        "（検索にも出ません）。画像を見て確認してください。",
+        on_close=on_close,
+    )
+
+
+def show_result_image_viewer(page: ft.Page, items: list[ImageItem], start: int = 0) -> None:
+    """取り込んだ結果の画像を、items の並びのまま、start 番目から 1 枚ずつ表示する。"""
+    _show_viewer(page, items, "取り込んだ結果の画像", None, start=start)
+
+
+def _show_viewer(
+    page: ft.Page,
+    items: list[ImageItem],
+    heading: str,
+    note: str | None,
+    start: int = 0,
+    on_close: Callable[[], None] | None = None,
+) -> None:
     # 画像読み取りの依存（numpy / OpenCV）は重いので、使うときだけ読み込む
     from app.ocr.kuijin_ocr import result_view_png
 
-    items = sorted(items, key=lambda item: (item[0] is None, item[0] or 0, item[2]))
-    position = [0]
+    position = [start]
     title = ft.Text("")
     # 何回目の練成かとゼニーは、ゲームの中でその結果を探す手がかりなので、大きく出す
     headline = ft.Text("", size=24, weight=ft.FontWeight.BOLD, selectable=True)
@@ -59,8 +94,7 @@ def show_unread_viewer(
 
     def render() -> None:
         count, zeny, path, exact = items[position[0]]
-        where = f"バッチ #{batch_id} の" if batch_id is not None else ""
-        title.value = f"{where}確認が必要な画像（{position[0] + 1} / {len(items)}）"
+        title.value = f"{heading}（{position[0] + 1} / {len(items)}）"
         headline.value = (
             (f"{count}回目" if count is not None else "回数不明")
             + "　　ゼニー："
@@ -92,8 +126,7 @@ def show_unread_viewer(
         title=title,
         content=ft.Column(
             [
-                ft.Text("読み取れない値があったか、読み取った内容に疑わしい点があったため、この結果は取り込んでいません"
-                        "（検索にも出ません）。画像を見て確認してください。", size=12),
+                *([ft.Text(note, size=12)] if note else []),
                 headline,
                 image_holder,
                 missing,

@@ -684,8 +684,8 @@ def money_thousands(digits: str) -> str:
     return digits[:-3] if len(digits) > 3 else "?"
 
 
-def check_money_tail(values: list[dict]) -> None:
-    """所持ゼニーの下 3 桁を、記録の中でいちばん多い値と比べ、money_k を直す。
+def check_money_tail(values: list[dict]) -> int | None:
+    """所持ゼニーの下 3 桁を、記録の中でいちばん多い値と比べ、money_k を直す。その下 3 桁を返す（分からなければ None）。
 
     1 回の練成で減るのは千ゼニーの倍数なので、所持ゼニーの下 3 桁は 1 つの記録の中で変わらない。
     - 下 3 桁が違う画像は、読み間違いか別の記録の画像なので、ゼニーを読めない値（"?"）にし、理由を
@@ -696,7 +696,7 @@ def check_money_tail(values: list[dict]) -> None:
     """
     tails = Counter(v["money"][-3:] for v in values if v.get("money", "").isdigit() and len(v["money"]) > 3)
     if not tails:
-        return
+        return None
     tail = tails.most_common(1)[0][0]
     for v in values:
         money = v.get("money", "")
@@ -709,6 +709,7 @@ def check_money_tail(values: list[dict]) -> None:
             v["money_k"] = "?"
             v["money_error"] = (f"所持ゼニー（{money}）の下 3 桁が、ほかの画像（{tail}）と違います"
                                 f"（読み間違いか、別の記録の画像の疑い）")
+    return int(tail)
 
 
 # ---------------------------------------------------------------- 確認用
@@ -838,6 +839,11 @@ class Report:
     # アプリでは、これだけを「画像読み取りの矛盾」として残す
     batch_errors: list[str] = field(default_factory=list)
     import_text: str = ""   # text から review の行を除いたもの（アプリが取り込むのはこちら）
+    # import_text の行ごとの、読み取った画像のファイル名 {回数: ファイル名}（検索結果などから画像を見るために保存する）
+    image_names: dict[int, str] = field(default_factory=dict)
+    # 所持ゼニーの下 3 桁（記録の中でいちばん多い値。分からなければ None）。text のゼニーは千単位なので、
+    # 画像の画面で正確な値を出すために保存する
+    money_tail: int | None = None
 
 
 def build_report(records: list, step_k: int, template_dir: Path,
@@ -852,7 +858,7 @@ def build_report(records: list, step_k: int, template_dir: Path,
     table（抽選テーブル）を渡したときは、残した行が抽選の仕様で作れるかも調べる（spec_errors）。
     """
     rows = [(name, ex["screen"], v) for name, ex, v in records if v is not None]
-    check_money_tail([v for _, _, v in rows])
+    money_tail = check_money_tail([v for _, _, v in rows])
     checker = SpecChecker(table, minus_skills) if table is not None else None
     first = next((v["money_k"] for _, _, v in rows if "?" not in v["money_k"]), None)
     init = int(first) + step_k if first is not None else None
@@ -921,8 +927,9 @@ def build_report(records: list, step_k: int, template_dir: Path,
     review = [(i + 3, None if lines[i][0] == "?" else int(lines[i][0]), None if "?" in lines[i][1] else int(lines[i][1]),
                kept[i][0], " / ".join(reasons[i]), exact_money(i)) for i in sorted(reasons)]
     import_text = head + "".join(",".join([c, z, *b]) + "\n" for i, (c, z, b) in enumerate(lines) if i not in reasons)
+    image_names = {int(c): kept[i][0] for i, (c, _, _) in enumerate(lines) if i not in reasons}
     return Report(text, errors, len(lines), dup, [message for _, message in spec], review, conflicts + sequence,
-                  import_text)
+                  import_text, image_names, money_tail)
 
 
 def describe_values(v: dict) -> str:

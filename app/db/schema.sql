@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS import_batches (
     row_count       INTEGER NOT NULL,
     errors_analyzed INTEGER NOT NULL DEFAULT 0,  -- エラー検出を実施したか。機能追加前のバッチは0
     source          TEXT NOT NULL DEFAULT 'nx',  -- 取込元。'nx'=NX Macro Controllerのテキスト, '8bit'=練成画像の読み取り
-    image_dir       TEXT                         -- 8bit: 取り込んだ画像のフォルダ（エラー欄から画像の場所を開くため）
+    image_dir       TEXT,                        -- 8bit: 取り込んだ画像のフォルダ（エラー欄から画像の場所を開くため）
+    zeny_tail       INTEGER                      -- 8bit: 所持ゼニーの下3桁（記録の中で変わらない。results.zeny は千単位）
 );
 
 -- 取込時に検出した問題行。履歴タブの「エラー」欄で参照する。
@@ -42,7 +43,8 @@ CREATE TABLE IF NOT EXISTS results (
     skill_mask_lo      INTEGER NOT NULL DEFAULT 0,
     skill_mask_hi      INTEGER NOT NULL DEFAULT 0,
     skill_sum          INTEGER NOT NULL DEFAULT 0,
-    collected          INTEGER NOT NULL DEFAULT 0   -- 回収済みか。0=未回収, 1=回収済み
+    collected          INTEGER NOT NULL DEFAULT 0,  -- 回収済みか。0=未回収, 1=回収済み
+    image_name         TEXT                         -- 8bit: この結果を読み取った画像のファイル名（フォルダは import_batches.image_dir）
 );
 
 CREATE TABLE IF NOT EXISTS result_skills (
