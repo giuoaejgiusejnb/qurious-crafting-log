@@ -50,6 +50,20 @@ def _display_order(skill: tuple[str, int]) -> tuple:
     return (0 if value > 0 else 1, -cost, _MASTER_POSITION.get(name, len(_MASTER_POSITION)), name)
 
 
+def signed_text(value: int) -> str:
+    """耐性などの増減の表示。プラスには "+" を付ける（0 は符号なし）。"""
+    return f"{value:+d}" if value else "0"
+
+
+def aligned_number(text: str, digits_width: int, width: int) -> ft.Control:
+    """一覧の数字のセル。列の中では左に置いたまま、1 の位が縦にそろうようにする。
+
+    字ごとに幅が違う（"+" と "-"、1 桁と 2 桁）ので、左詰めの文字のままでは桁がずれる。列の左端に
+    digits_width の枠を置き、その中で右に寄せる。
+    """
+    return ft.Row([ft.Text(text, width=digits_width, text_align=ft.TextAlign.RIGHT)], width=width, spacing=0)
+
+
 def build_skills_wrap(
     skills: list[tuple[str, int]],
     width: int = _SKILLS_COLUMN_WIDTH,

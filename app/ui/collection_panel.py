@@ -10,7 +10,7 @@ from app.core.collection import (
 )
 from app.core.search import fetch_result_images, fetch_skill_breakdown
 from app.db.connection import get_connection
-from app.ui.skills_display import build_skills_wrap
+from app.ui.skills_display import build_skills_wrap, signed_text
 from app.ui.unread_viewer import image_button, show_result_image_viewer
 
 _PANEL_WIDTH = 260
@@ -111,7 +111,7 @@ def build_collection_panel(
                                 f"ゼニー: {row.zeny}　コスト: {row.total_cost}", size=12
                             ),
                             ft.Text(
-                                f"スロット: {row.slot_add}　耐性: {row.print_resistance}",
+                                f"スロット: {row.slot_add}　耐性: {signed_text(row.print_resistance)}",
                                 size=12,
                             ),
                             build_skills_wrap(

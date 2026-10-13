@@ -22,10 +22,14 @@ from app.core.skill_colors import get_negative_skill_color, get_positive_skill_c
 from app.core.skill_registry import SkillRegistry
 from app.core.skill_sets import get_skill_set, list_skill_set_names
 from app.db.connection import get_connection
-from app.ui.skills_display import build_skills_wrap
+from app.ui.skills_display import aligned_number, build_skills_wrap, signed_text
 from app.ui.unread_viewer import image_button, show_result_image_viewer
 
 _UNSELECTED = "__unselected__"
+# 検索結果のコスト・耐性の数字を入れる枠の幅（この中で右に寄せて、1 の位をそろえる。aligned_number）。
+# コストは 2 桁、耐性は符号＋ 2 桁が入る幅
+_COST_DIGITS_WIDTH = 22
+_RESISTANCE_DIGITS_WIDTH = 28
 _PAGE_SIZE = 200
 
 _DEFAULT_COST_MIN = "0"
@@ -504,10 +508,10 @@ def build_search_view(
             [
                 ft.Text("練成回数", width=70, weight=ft.FontWeight.BOLD),
                 ft.Text("ゼニー", width=80, weight=ft.FontWeight.BOLD),
-                ft.Text("コスト", width=80, weight=ft.FontWeight.BOLD),
+                ft.Text("コスト", width=50, weight=ft.FontWeight.BOLD),
                 ft.Text("スキル", width=240, weight=ft.FontWeight.BOLD),
                 ft.Text("スロット", width=60, weight=ft.FontWeight.BOLD),
-                ft.Text("耐性", width=60, weight=ft.FontWeight.BOLD),
+                ft.Text("耐性", width=40, weight=ft.FontWeight.BOLD),
                 ft.Text("バッチ・防具", width=130, weight=ft.FontWeight.BOLD),
                 ft.Text("取込日時", width=90, weight=ft.FontWeight.BOLD),
                 ft.Text("回収", width=60, weight=ft.FontWeight.BOLD),
@@ -530,14 +534,14 @@ def build_search_view(
                         [
                             ft.Text(str(row.zeny_count), width=70),
                             ft.Text(str(row.zeny), width=80),
-                            ft.Text(str(row.total_cost), width=80),
+                            aligned_number(str(row.total_cost), _COST_DIGITS_WIDTH, 50),
                             build_skills_wrap(
                                 breakdown.get(row.id, []),
                                 positive_color=positive_color,
                                 negative_color=negative_color,
                             ),
                             ft.Text(str(row.slot_add), width=60),
-                            ft.Text(str(row.print_resistance), width=60),
+                            aligned_number(signed_text(row.print_resistance), _RESISTANCE_DIGITS_WIDTH, 40),
                             # 回収確認パネルが開いていても「回収」まで収まるよう、バッチと防具は 1 列に
                             # まとめ、取込日時は月日と時分だけにする（正確な日時は履歴タブで見られる）
                             ft.Text(f"#{row.batch_id} {row.label or ''}".strip(), width=130),
