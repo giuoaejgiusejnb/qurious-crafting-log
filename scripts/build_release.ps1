@@ -28,7 +28,8 @@ if ($BuildDir -match [regex]::Escape($env:USERNAME) -or $TempDir -match [regex]:
 if (Test-Path -LiteralPath $BuildDir) { Remove-Item -LiteralPath $BuildDir -Recurse -Force }
 New-Item -ItemType Directory -Force $BuildDir, $TempDir | Out-Null
 $archive = Join-Path $TempDir "source.tar"
-git -C $repo archive --format=tar -o $archive HEAD
+$commit = git -C $repo rev-parse --short HEAD   # ビルドの途中でコミットしても、書き出した時点のコミットを表示する
+git -C $repo archive --format=tar -o $archive $commit
 tar -x -f $archive -C $BuildDir
 Remove-Item -LiteralPath $archive
 
@@ -64,7 +65,7 @@ $out = Join-Path $repo "build\installer"
 New-Item -ItemType Directory -Force $out | Out-Null
 Copy-Item (Join-Path $BuildDir "build\installer\qurious-crafting-log-setup.exe") $out -Force
 Get-Item (Join-Path $out "qurious-crafting-log-setup.exe") | Select-Object FullName, Length, LastWriteTime
-Write-Host "コミット $(git -C $repo rev-parse --short HEAD) の内容でビルドしました"
+Write-Host "コミット $commit の内容でビルドしました"
 
 # ビルド用のフォルダは次回も最初から作り直すので、残しても使われない（約 1.3GB）。成功したら消す
 # （失敗したときは、原因を調べられるように残る）
