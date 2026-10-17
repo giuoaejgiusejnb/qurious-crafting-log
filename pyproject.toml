@@ -56,3 +56,6 @@ packages = false
 # 前提にしていて、ビルドが「Constant evaluation error」（generated_plugin.dart の JniVersionCheck）で失敗する。
 # ビルドのたびに最新を取り直すので、通っていた 1.0.3 に固定する（Flet を上げたら外せるか確かめる）
 jni_flutter = "1.0.3"
+# shared_preferences_android 2.5.0（2026-10 公開）も jni の新しい版を前提にしていて、同じ「Constant evaluation error」
+# （messages.g.jni.dart）で失敗する。v1.43 までのビルドで使っていた 2.4.28 に固定する（Flet を上げたら外せるか確かめる）
+shared_preferences_android = "2.4.28"
