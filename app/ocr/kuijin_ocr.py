@@ -442,27 +442,10 @@ def square_color(pixel: np.ndarray) -> str:
     return "?"
 
 
-def read_level_bar(img: np.ndarray, dy: int) -> str:
-    """スキル名の下の四角を数え、レベルの増減を "+1" "-2" などで返す。
+def level_squares(img: np.ndarray, dy: int) -> str:
+    """スキル名の下の四角の並び（G 緑 / R 赤 / B 青 / g 空きの灰色 / ? 不明）。長さ = そのスキルの最大レベル。
 
-    サンプル全体で、文字 "Lv +n" がオレンジになるのは空き（灰色）が無い＝最大レベルに
-    達したとき、緑になるのは空きが残っているときだった。色は増減の判定には使わない。
-    """
-    y = BAR_Y + dy
-    colors = [square_color(np.median(img[y - 1:y + 2, x - 1:x + 2].reshape(-1, 3), axis=0))
-              for x in range(BAR_X0, BAR_X0 + BAR_PITCH * MAX_LEVEL, BAR_PITCH)]
-    delta = colors.count("G") - colors.count("R")
-    if "?" in colors or delta == 0:
-        return "?"
-    return f"{delta:+d}"
-
-
-def skill_features(img: np.ndarray, dy: int) -> dict[str, str]:
-    """整合性チェック用に、スキル 1 行分の見た目を記録する。
-
-    bar   : 四角の並び（G 緑 / R 赤 / B 青 / g 空きの灰色 / ? 不明）。長さ = そのスキルの最大レベル
-    color : "Lv ±n" の文字色（green / orange / red）
-    icon  : スキル名の左のアイコンの色（明るい画素の BGR 中央値, "b:g:r"）
+    左から 8 個分の位置を見て、四角でない所（背景。赤く光った背景も含む）で止める。
     """
     y = BAR_Y + dy
     bar = ""
@@ -472,9 +455,36 @@ def skill_features(img: np.ndarray, dy: int) -> dict[str, str]:
         if not c:
             b, g, r = (int(v) for v in px)
             if max(b, g, r) < 38 or max(b, g, r) - min(b, g, r) >= 12:   # 空きの灰色は差が 5 程度
-                break                   # 四角の並びの終わり（背景。赤く光った背景も含む）
+                break                   # 四角の並びの終わり
             c = "g"
         bar += c
+    return bar
+
+
+def read_level_bar(img: np.ndarray, dy: int) -> str:
+    """スキル名の下の四角を数え、レベルの増減を "+1" "-2" などで返す。
+
+    数えるのは四角の並びの中だけ（level_squares）。以前は 8 個分の位置をすべて見ていて、並びより右の空いた所に
+    レア演出の赤い光の粒が重なると、赤い四角として数えていた（火事場力 -1 を -2 と読んで、そのまま取り込まれた
+    例がある。2026-10-17。docs/ocr_render_difference.md）。
+    サンプル全体で、文字 "Lv +n" がオレンジになるのは空き（灰色）が無い＝最大レベルに
+    達したとき、緑になるのは空きが残っているときだった。色は増減の判定には使わない。
+    """
+    colors = level_squares(img, dy)
+    delta = colors.count("G") - colors.count("R")
+    if "?" in colors or delta == 0:
+        return "?"
+    return f"{delta:+d}"
+
+
+def skill_features(img: np.ndarray, dy: int) -> dict[str, str]:
+    """整合性チェック用に、スキル 1 行分の見た目を記録する。
+
+    bar   : 四角の並び（level_squares）。長さ = そのスキルの最大レベル
+    color : "Lv ±n" の文字色（green / orange / red）
+    icon  : スキル名の左のアイコンの色（明るい画素の BGR 中央値, "b:g:r"）
+    """
+    bar = level_squares(img, dy)
     text = img[392 + dy:414 + dy, 700:762].astype(int)
     ink = text.max(axis=2) > 150
     color = ""

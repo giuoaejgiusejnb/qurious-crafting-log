@@ -326,6 +326,22 @@ def test_images_and_templates_under_non_ascii_paths(tmp_path):
     assert set(_signatures) == set(LAYOUTS)   # 画面判定の見本が読めている
 
 
+def test_level_bar_ignores_spots_right_of_the_squares():
+    """レベルの増減は、四角の並びの中だけで数える。並びより右の空いた所にある赤い光の粒は数えない。"""
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import BAR_PITCH, BAR_X0, BAR_Y, read_level_bar, skill_features
+
+    img = np.full((720, 1280, 3), 20, dtype=np.uint8)
+    for i, bgr in enumerate([(230, 120, 40), (230, 120, 40), (40, 40, 190), (60, 60, 60), (60, 60, 60)]):
+        x = BAR_X0 + BAR_PITCH * i   # 青・青・赤・灰・灰（火事場力 Lv3 → Lv2、最大 Lv5）
+        img[BAR_Y - 3:BAR_Y + 4, x - 5:x + 6] = bgr
+    assert read_level_bar(img, 0) == "-1" and skill_features(img, 0)["bar"] == "BBRgg"
+    x = BAR_X0 + BAR_PITCH * 6   # 並びの右の空いた所に、赤い光の粒
+    img[BAR_Y - 2:BAR_Y + 3, x - 2:x + 3] = (60, 50, 200)
+    assert read_level_bar(img, 0) == "-1"
+
+
 def test_result_rows_keep_their_image(tmp_path):
     """取り込んだ結果ごとに、読み取った画像のファイル名を残す（検索結果や回収の画面から、その画像を見るため）。
 
