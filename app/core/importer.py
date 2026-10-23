@@ -6,7 +6,7 @@ from typing import Callable
 
 from app.core.history import is_missing_shot_issue
 from app.core.models import ParsedResult
-from app.core.parser import parse_result_log_block
+from app.core.parser import parse_result_log_block, repeated_skill_names
 from app.core.skill_mask import compute_mask
 from app.core.skill_registry import SkillRegistry
 
@@ -20,6 +20,43 @@ SOURCE_8BIT = "8bit"  # 練成画像を読み取って作ったresult_log（app/
 # マクロの長時間停止やゼニーOCRの誤読による外れ値とみなし、記録しない。
 # 幽霊行の除去で生じる欠番は高々1〜数回分のため、これで十分カバーできる。
 _MAX_GAP_TO_REPORT = 50
+
+
+_MAX_LISTED_DUPLICATES = 5  # 同じスキルが2回ある練成をメッセージに並べる上限
+
+
+class DuplicateSkillError(Exception):
+    """同じスキルが2回入っている練成結果があり、取込を行わなかった。
+
+    ゲームの結果画面では同じスキルは1行（例: 奮闘+2）にまとまるため、これは書き出し側の誤り。
+    NX では使い方が正しくないときに起こり、その場合は他の練成結果も正しくない可能性が高いので、
+    バッチごと取り込まない（DB には何も保存しない）。
+    """
+
+    def __init__(self, lines: list[str]) -> None:
+        self.lines = lines  # 同じスキルが2回入っている行（元の行のまま）
+        shown = lines[:_MAX_LISTED_DUPLICATES]
+        listed = list(shown)
+        if len(lines) > len(shown):
+            listed.append(f"…ほか {len(lines) - len(shown)}件")
+        super().__init__(
+            f"同じスキルが2回入っている練成結果が {len(lines)}件 あるため、取り込みませんでした\n"
+            + "\n".join(listed)
+        )
+
+
+class ImportRowError(Exception):
+    """練成結果を1行保存するところで失敗した（DB には何も保存していない）。失敗した行を見せるために使う。"""
+
+    def __init__(self, line: str, cause: Exception) -> None:
+        self.line = line
+        self.cause = cause
+        super().__init__(f"{cause}\n失敗した行: {line}")
+
+
+def _find_duplicate_skill_lines(results: list[ParsedResult]) -> list[str]:
+    """同じスキルが2回以上入っている練成の元の行を返す。"""
+    return [r.source_line for r in results if repeated_skill_names([s.name for s in r.skills])]
 
 
 @dataclass
@@ -127,6 +164,52 @@ def _extract_zeny_count_from_message(message: str) -> int | None:
         return None
 
 
+def _insert_result(
+    conn: sqlite3.Connection,
+    registry: SkillRegistry,
+    batch_id: int,
+    imported_at: str,
+    label: str | None,
+    result: ParsedResult,
+    image_name: str | None,
+) -> None:
+    """練成結果を1行分（results と result_skills）保存する。"""
+    skill_ids = [registry.get_or_create_id(s.name) for s in result.skills]
+    mask_lo, mask_hi = compute_mask(skill_ids)
+    skill_sum = sum(s.value for s in result.skills)
+
+    cur = conn.execute(
+        """
+        INSERT INTO results (
+            batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost,
+            has_deficiency, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum, image_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            batch_id,
+            imported_at,
+            label,
+            result.zeny_count,
+            result.zeny,
+            result.slot_add,
+            result.total_cost,
+            result.has_deficiency,
+            result.print_resistance,
+            mask_lo,
+            mask_hi,
+            skill_sum,
+            image_name,
+        ),
+    )
+    result_id = cur.lastrowid
+
+    if result.skills:
+        conn.executemany(
+            "INSERT INTO result_skills (result_id, skill_id, value) VALUES (?, ?, ?)",
+            [(result_id, sid, s.value) for sid, s in zip(skill_ids, result.skills)],
+        )
+
+
 def import_block(
     conn: sqlite3.Connection,
     text: str,
@@ -158,8 +241,12 @@ def import_block(
     image_namesは画像読み取りで、練成回数ごとの画像のファイル名（{練成回数: ファイル名}）。results.image_name に
     保存し、検索結果や回収の画面から、その結果の画像を見られるようにする。
     zeny_tailは画像読み取りの所持ゼニーの下3桁（textのゼニーは千単位。画像の画面で正確な値を出すために保存する）。
+    同じスキルが2回入っている練成が1つでもあれば、何も保存せずに DuplicateSkillError を送出する。
     """
     parsed, errors = parse_result_log_block(text)
+    duplicate_lines = _find_duplicate_skill_lines(parsed)
+    if duplicate_lines:
+        raise DuplicateSkillError(duplicate_lines)
     results, dropped_duplicate_count = _dedupe_consecutive_duplicates(parsed)
 
     error_zeny_counts = {
@@ -232,40 +319,13 @@ def import_block(
     total = len(results)
 
     for i, result in enumerate(results, start=1):
-        skill_ids = [registry.get_or_create_id(s.name) for s in result.skills]
-        mask_lo, mask_hi = compute_mask(skill_ids)
-        skill_sum = sum(s.value for s in result.skills)
-
-        cur = conn.execute(
-            """
-            INSERT INTO results (
-                batch_id, imported_at, label, zeny_count, zeny, slot_add, total_cost,
-                has_deficiency, print_resistance, skill_mask_lo, skill_mask_hi, skill_sum, image_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                batch_id,
-                imported_at,
-                label,
-                result.zeny_count,
-                result.zeny,
-                result.slot_add,
-                result.total_cost,
-                result.has_deficiency,
-                result.print_resistance,
-                mask_lo,
-                mask_hi,
-                skill_sum,
-                (image_names or {}).get(result.zeny_count),
-            ),
-        )
-        result_id = cur.lastrowid
-
-        if result.skills:
-            conn.executemany(
-                "INSERT INTO result_skills (result_id, skill_id, value) VALUES (?, ?, ?)",
-                [(result_id, sid, s.value) for sid, s in zip(skill_ids, result.skills)],
+        try:
+            _insert_result(
+                conn, registry, batch_id, imported_at, label, result, (image_names or {}).get(result.zeny_count)
             )
+        except Exception as exc:  # 想定外の失敗でも、どの行で失敗したかを見せる。バッチごと何も保存しない
+            conn.rollback()
+            raise ImportRowError(result.source_line, exc) from exc
 
         if progress_callback and (i % _PROGRESS_STEP == 0 or i == total):
             progress_callback(i, total)

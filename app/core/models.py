@@ -16,3 +16,4 @@ class ParsedResult:
     has_deficiency: int  # スキル欠け（マイナス値のスキルを含む）の有無。0=無, 1=有
     print_resistance: int
     skills: list[ParsedSkill] = field(default_factory=list)
+    source_line: str = ""  # パースした元の行（エラーのときに、その行をそのまま見せるため）

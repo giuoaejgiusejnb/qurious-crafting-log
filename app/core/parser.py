@@ -112,7 +112,17 @@ def parse_result_log_line(line: str) -> ParsedResult:
         has_deficiency=has_deficiency,
         print_resistance=print_resistance,
         skills=skills,
+        source_line=line,
     )
+
+
+def repeated_skill_names(names: list[str]) -> list[str]:
+    """2回以上入っているスキル名を、最初に出た順で返す（全角・半角の違いは同じスキルとみなす。空欄は数えない）。
+
+    ゲームの結果画面では、同じスキルは1行（例: 奮闘+2）にまとまるので、2回入っているのは読み取りの誤り。
+    """
+    normalized = [unicodedata.normalize("NFKC", name) for name in names if name]
+    return [name for name in dict.fromkeys(normalized) if normalized.count(name) > 1]
 
 
 def parse_result_log_block(text: str) -> tuple[list[ParsedResult], list[tuple[int, str]]]:

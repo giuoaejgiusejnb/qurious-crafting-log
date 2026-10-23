@@ -52,6 +52,7 @@ from typing import Callable
 import cv2
 import numpy as np
 
+from app.core.parser import repeated_skill_names
 from app.core.skill_master import (
     HIDDEN_MINUS_SKILL_NAME,
     HIDDEN_SOME_MINUS_SKILL_NAME,
@@ -923,6 +924,11 @@ def build_report(records: list, step_k: int, template_dir: Path,
             reasons.setdefault(i, []).append(kept[i][2]["money_error"])
         elif "?" in c + z + "".join(b):
             reasons.setdefault(i, []).append("読み取れない値があります")
+        # b は スロ, コスト, マイナス, 耐性, 第1名, 第1値, …, 対象。同じスキルは結果画面で 1 行にまとまるので、
+        # 2 回あるのは読み間違い（読めていない名前は上で回しているので数えない）
+        repeated = repeated_skill_names([name for name in b[4:-1:2] if "?" not in name])
+        if repeated:
+            reasons.setdefault(i, []).append(f"同じスキルが2回あります（{'、'.join(repeated)}）")
     index_of = {name: i for i, (name, _, _) in enumerate(kept)}
     for name, message in consistency:
         if name in index_of:   # 同じ回の重複として除いた画像の分は、取り込まないので対象外

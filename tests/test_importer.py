@@ -1,6 +1,6 @@
 import pytest
 
-from app.core.importer import import_block
+from app.core.importer import DuplicateSkillError, ImportRowError, import_block
 from app.core.skill_mask import compute_mask
 from app.db.connection import get_connection
 from tests.helpers import build_row
@@ -272,3 +272,55 @@ def test_unparsable_line_persisted_with_zeny_count(conn):
         (summary.batch_id,),
     ).fetchone()
     assert row == ("unparsable", 1248)
+
+
+def test_duplicate_skill_rejects_whole_batch(conn):
+    """同じスキルが2回ある練成が1つでもあれば、他の行も含めて何も保存せず、その行をそのまま見せる。"""
+    duplicated = build_row(zeny_count=2, skills=[("災禍転福", 1), ("奮闘", 1), ("奮闘", 1), ("火事場力", -1)])
+    text = "\n".join(
+        [
+            build_row(zeny_count=1, skills=[("攻撃", 1)]),
+            duplicated,
+            build_row(zeny_count=3, skills=[("見切り", 1)]),
+        ]
+    )
+
+    with pytest.raises(DuplicateSkillError) as exc_info:
+        import_block(conn, text, label="テスト取込")
+
+    assert exc_info.value.lines == [duplicated]
+    assert str(exc_info.value).splitlines()[1] == duplicated
+    assert conn.execute("SELECT COUNT(*) FROM import_batches").fetchone() == (0,)
+    assert conn.execute("SELECT COUNT(*) FROM results").fetchone() == (0,)
+
+
+def test_duplicate_skill_detected_after_fullwidth_normalization(conn):
+    """全角と半角で書かれた同じスキル（ＫＯ術 と KO術）も同じスキルとみなす。"""
+    text = build_row(zeny_count=1, skills=[("ＫＯ術", 1), ("KO術", 1)])
+
+    with pytest.raises(DuplicateSkillError):
+        import_block(conn, text)
+
+
+def test_unexpected_failure_reports_the_row_and_saves_nothing(conn, monkeypatch):
+    """1行の保存で想定外の失敗が起きたら、その行を添えて止め、それまでの行も保存しない。"""
+    import app.core.importer as importer
+
+    original = importer.compute_mask
+
+    def failing_compute_mask(skill_ids):
+        if len(skill_ids) == 2:
+            raise RuntimeError("テスト用の失敗")
+        return original(skill_ids)
+
+    monkeypatch.setattr(importer, "compute_mask", failing_compute_mask)
+    failing = build_row(zeny_count=2, skills=[("攻撃", 1), ("見切り", 1)])
+    text = "\n".join([build_row(zeny_count=1, skills=[("攻撃", 1)]), failing])
+
+    with pytest.raises(ImportRowError) as exc_info:
+        import_block(conn, text)
+
+    assert exc_info.value.line == failing
+    assert str(exc_info.value.cause) == "テスト用の失敗"
+    assert conn.execute("SELECT COUNT(*) FROM import_batches").fetchone() == (0,)
+    assert conn.execute("SELECT COUNT(*) FROM results").fetchone() == (0,)

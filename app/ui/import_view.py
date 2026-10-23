@@ -8,7 +8,7 @@ import flet as ft
 from app.core.armor_defaults import reset_armor_defaults
 from app.core.equipment import CUSTOM_OPTIONS_KEY, DEFAULT_EQUIPMENT_OPTIONS, TABLE_NONE, resolve_ocr_params
 from app.core.history import is_missing_shot_issue
-from app.core.importer import ImportSummary, import_block
+from app.core.importer import DuplicateSkillError, ImportRowError, ImportSummary, import_block
 from app.core.settings import get_json_setting, get_setting, set_json_setting, set_setting
 from app.db.connection import get_connection
 from app.ui.ocr_label_dialog import show_label_dialog
@@ -452,6 +452,19 @@ def build_import_view(
         conn = get_connection(db_path)
         try:
             summary = import_block(conn, text, label, progress_callback=report_progress)
+        except DuplicateSkillError as exc:
+            # NX が結果を読み間違えている。他の練成結果も正しくない可能性が高いので、ログごと取り込まない
+            status_text.value = f"{exc}\nゲーム画面の明るさが適切でない可能性が高いため、このログは取り込みません。"
+            set_busy(False)
+            return
+        except ImportRowError as exc:  # 想定外のエラーでも画面を固めず、失敗した行を見せる
+            status_text.value = f"取込に失敗しました: {exc.cause}\n失敗した行: {exc.line}"
+            set_busy(False)
+            raise
+        except Exception as exc:  # 想定外のエラーでも画面を固めない
+            status_text.value = f"取込に失敗しました: {exc}"
+            set_busy(False)
+            raise
         finally:
             conn.close()
 

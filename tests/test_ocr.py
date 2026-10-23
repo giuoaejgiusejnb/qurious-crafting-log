@@ -101,6 +101,17 @@ def test_rows_needing_review_are_not_imported(tmp_path):
     conn.close()
 
 
+def test_row_with_same_skill_twice_needs_review(tmp_path):
+    """同じスキルが2回ある行は読み間違いなので、確認が必要な画像に回す（取込は止めない）。"""
+    twice = _values("96")
+    twice.update({"skill2": "攻撃", "lv2": "+1"})
+    report = build_report([_record("a.jpg", _values("100")), _record("b.jpg", twice), _record("c.jpg", _values("92"))],
+                          4, tmp_path)
+    assert [(count, name) for _, count, _, name, _, _ in report.review] == [(2, "b.jpg")]
+    assert "同じスキルが2回あります（攻撃）" in report.review[0][4]
+    assert report.import_text.count("\n") == 4   # 見出し 2 行 + 取り込む 2 行
+
+
 def test_too_many_images_needing_review_stops_the_import():
     """確認が必要な画像が多すぎるバッチは、取り込まない（入力の違い・対応していない表示などの疑い）。"""
     from app.ocr.image_import import too_many_to_review as stops
