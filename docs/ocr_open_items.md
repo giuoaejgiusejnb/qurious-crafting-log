@@ -197,6 +197,13 @@ GitHub Releases に `v1.44` を公開した（2026-10-20、ユーザーの合図
 `docs/release_notes_v1.44.md`）。インストール版での確認は、公開の前にユーザーが済ませていた（公開の後に聞いた）。
 v1.44 は起動時に DB へ列を 2 つ足す（`results.image_name`・`import_batches.zeny_tail`）
 
+## v1.45（準備中）
+
+2026-11-01 にバージョンを v1.45 にした（`app/version.py`・`installer/qurious_crafting_log.iss`）。リリースノートは
+`docs/release_notes_v1.45.md`。v1.44 からの変更: 取込を中止したときの案内文（c6a369c）、同じスキルが 2 回入っている
+結果で取込が固まらないようにした（b11e08c）、マッスル腕の携帯モードの見本 15 個（e4c52aa）、検索タブの
+「練成回数で移動」と「コストが高い順」の同じコストどうしの並び（021ec83）。DB の列の追加は無い
+
 ## 配布後にやること: samples の整理（2026-09-30 決定）
 
 `mhrise-skill-ocr\samples\`（このリポジトリの隣のフォルダ）（画像 約 12.5 万枚・約 26GB、画像以外 約 40MB）は、
