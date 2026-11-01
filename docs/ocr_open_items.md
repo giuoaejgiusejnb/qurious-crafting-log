@@ -197,7 +197,11 @@ GitHub Releases に `v1.44` を公開した（2026-10-20、ユーザーの合図
 `docs/release_notes_v1.44.md`）。インストール版での確認は、公開の前にユーザーが済ませていた（公開の後に聞いた）。
 v1.44 は起動時に DB へ列を 2 つ足す（`results.image_name`・`import_batches.zeny_tail`）
 
-## v1.45（準備中）
+## v1.45（2026-11-01 公開）
+
+GitHub Releases に `v1.45` を公開した（2026-11-01、ユーザーの合図で。タグはコミット 85e0d84、添付は同じコミットを
+2026-11-01 13:49 に `scripts/build_release.ps1` でビルドしたインストーラー、約 67MB）。インストール版での確認は、
+公開の前にはしていない。
 
 2026-11-01 にバージョンを v1.45 にした（`app/version.py`・`installer/qurious_crafting_log.iss`）。リリースノートは
 `docs/release_notes_v1.45.md`。v1.44 からの変更: 取込を中止したときの案内文（c6a369c）、同じスキルが 2 回入っている
