@@ -6,9 +6,11 @@ from app.core.importer import import_block
 from app.core.search import (
     SearchParams,
     count_results,
+    explain_missing_craft,
     fetch_distinct_import_dates,
     fetch_distinct_labels,
     fetch_skill_breakdown,
+    find_craft_position,
     search_results,
 )
 from app.core.skill_registry import SkillRegistry
@@ -462,3 +464,74 @@ def test_unknown_skill_does_not_change_threshold_search(conn):
     assert [r.batch_id for r in hits] == [summary.batch_id]
     assert search_results(conn, SearchParams(allowed_skill_ids=[unknown], threshold=1)) == []
     assert ("不明", 0) in fetch_skill_breakdown(conn, [hits[0].id])[hits[0].id]
+
+
+def test_search_total_cost_sort_breaks_ties_in_craft_order(conn):
+    import_block(conn, "\n".join(build_row(zeny_count=i, total_cost=c) for i, c in [(1, 6), (2, 9), (3, 6)]))
+    import_block(conn, "\n".join(build_row(zeny_count=i, total_cost=6) for i in [1, 2]))
+
+    rows = search_results(conn, SearchParams(sort="total_cost_desc"))
+
+    assert [(r.batch_id, r.zeny_count) for r in rows] == [(1, 2), (2, 1), (2, 2), (1, 1), (1, 3)]
+
+
+@pytest.mark.parametrize("sort", ["craft_order", "total_cost_desc"])
+def test_find_craft_position_matches_the_row_order_of_search_results(conn, sort):
+    # 練成回数 2・4 は取り込まれていない（欠番）ので、行の位置と回数はずれる
+    import_block(conn, "\n".join(build_row(zeny_count=i, total_cost=i % 3 * 3) for i in [1, 3, 5, 6, 7]))
+    import_block(conn, "\n".join(build_row(zeny_count=i) for i in [1, 2, 3]))
+
+    params = SearchParams(sort=sort, batch_id=1)
+    rows = search_results(conn, params)
+
+    for position, row in enumerate(rows, start=1):
+        assert find_craft_position(conn, params, row.zeny_count) == position
+    assert find_craft_position(conn, params, 4) is None
+
+
+def test_find_craft_position_applies_the_search_filters(conn):
+    import_block(conn, "\n".join(build_row(zeny_count=i, total_cost=c) for i, c in [(1, 3), (2, 12), (3, 12)]))
+
+    params = SearchParams(batch_id=1, min_total_cost=9)
+
+    assert find_craft_position(conn, params, 3) == 2
+    assert find_craft_position(conn, params, 1) is None
+
+
+def test_find_craft_position_needs_a_single_batch(conn):
+    with pytest.raises(ValueError):
+        find_craft_position(conn, SearchParams(), 1)
+
+
+def _add_issue(conn, kind, zeny_count, batch_id=1):
+    conn.execute(
+        "INSERT INTO import_issues (batch_id, kind, zeny_count, detail) VALUES (?, ?, ?, '')",
+        (batch_id, kind, zeny_count),
+    )
+
+
+def test_explain_missing_craft_tells_why_the_row_is_not_shown(conn):
+    # 取込で、欠番の 2〜4 回目は「飛ばされている練成」として記録される
+    import_block(conn, "\n".join(build_row(zeny_count=i) for i in [1, 5, 6, 7, 8]))
+    _add_issue(conn, "unread", 2)
+    _add_issue(conn, "unparsable", 4)
+
+    assert explain_missing_craft(conn, 1, 5) == "5回目は検索条件に合わないため、検索結果にありません。"
+    assert explain_missing_craft(conn, 1, 2) == (
+        "2回目は確認が必要な画像のため、取り込まれていません。画像は履歴タブの「エラー」欄から見られます。"
+    )
+    assert explain_missing_craft(conn, 1, 3) == (
+        "3回目は記録が飛ばされているため、取り込まれていません（履歴タブの「エラー」欄の「飛ばされている練成」）。"
+    )
+    assert explain_missing_craft(conn, 1, 4) == (
+        "4回目は読み込みできなかった行のため、取り込まれていません（履歴タブの「エラー」欄）。"
+    )
+    assert explain_missing_craft(conn, 1, 9) == "9回目はこのバッチにありません（このバッチは1〜8回目です）。"
+
+
+def test_explain_missing_craft_without_any_record(conn):
+    # エラー欄の追加前に取り込まれたバッチなど、欠番の記録が無い場合
+    import_block(conn, "\n".join(build_row(zeny_count=i) for i in [1, 3]))
+    conn.execute("DELETE FROM import_issues")
+
+    assert explain_missing_craft(conn, 1, 2) == "2回目はこのバッチに記録がありません。"

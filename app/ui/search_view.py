@@ -12,10 +12,12 @@ from app.core.search import (
     RESISTANCE_OPTIONS,
     SearchParams,
     count_results,
+    explain_missing_craft,
     fetch_distinct_import_dates,
     fetch_distinct_labels,
     fetch_result_images,
     fetch_skill_breakdown,
+    find_craft_position,
     search_results,
 )
 from app.core.skill_colors import get_negative_skill_color, get_positive_skill_color
@@ -428,10 +430,19 @@ def build_search_view(
     # (件数-1)を_PAGE_SIZEで割った商がそのままページ番号（0始まり）になる。
     jump_to_count_field = ft.TextField(label="件数で移動", width=140, disabled=True)
     jump_to_count_button = ft.Button(content="移動", disabled=True)
+    # 練成回数を指定して、その行のページへ移動する。練成回数はバッチごとに 1 から数えるので、
+    # 複数バッチの検索では行が決まらない。バッチを 1 つ選んで検索したときだけ使える
+    craft_jump_tooltip = "バッチを1つ選んで検索したときに使えます"
+    jump_to_craft_field = ft.TextField(
+        label="練成回数で移動", width=140, disabled=True, tooltip=craft_jump_tooltip
+    )
+    jump_to_craft_button = ft.Button(content="移動", disabled=True, tooltip=craft_jump_tooltip)
 
     current_offset = 0
     has_next_page = False
     total_count = 0
+    # 表示中の検索結果が単一バッチの検索なら、そのバッチ（練成回数で移動を使えるか）
+    searched_batch_id: int | None = None
     # 件数指定でジャンプした際、その件数（1始まりの通し番号）を保持し、
     # render_resultsで該当行だけ色を変えて目立たせるのに使う。
     # 通常の検索・バッチ選択では都度クリアする（ページ送りでは維持し、
@@ -446,6 +457,8 @@ def build_search_view(
             btn.disabled = busy or not has_next_page
         jump_to_count_field.disabled = busy or total_count <= 0
         jump_to_count_button.disabled = busy or total_count <= 0
+        jump_to_craft_field.disabled = busy or searched_batch_id is None
+        jump_to_craft_button.disabled = busy or searched_batch_id is None
         progress_bar.visible = busy
         page.update()
 
@@ -672,12 +685,14 @@ def build_search_view(
         # duration=0で即時ジャンプにし、アニメーション分の固定遅延をなくす。
         await view.scroll_to(scroll_key=_SCROLL_ANCHOR_KEY, duration=0)
 
-    def run_search_page(offset: int) -> None:
-        nonlocal current_offset, has_next_page, total_count
+    def run_search_page(offset: int, params: SearchParams | None = None) -> None:
+        nonlocal current_offset, has_next_page, total_count, searched_batch_id
 
-        params = build_current_params(offset)
+        if params is None:
+            params = build_current_params(offset)
         if params is None:
             return
+        searched_batch_id = params.batch_id
 
         set_busy(True)
         status_text.value = "検索中..."
@@ -747,6 +762,55 @@ def build_search_view(
 
     jump_to_count_button.on_click = on_jump_click
     jump_to_count_field.on_submit = on_jump_submit
+
+    def do_jump_to_craft() -> None:
+        """入力された練成回数の行が含まれるページへ移動し、その行を目立たせる。
+
+        条件は画面の今の内容で検索し直す（ページの表示と同じ条件で何件目かを数えるため）。
+        その回が検索結果に無ければ移動せず、理由を出す。
+        """
+        nonlocal highlighted_count
+
+        raw = (jump_to_craft_field.value or "").strip()
+        try:
+            zeny_count = int(raw)
+        except ValueError:
+            status_text.value = "練成回数は半角数字で入力してください"
+            page.update()
+            return
+        if zeny_count < 1:
+            status_text.value = "練成回数は1以上の数値を入力してください"
+            page.update()
+            return
+
+        params = build_current_params(0)
+        if params is None:
+            return
+        if params.batch_id is None:
+            status_text.value = "練成回数で移動は、バッチを1つ選んで検索したときに使えます"
+            page.update()
+            return
+
+        conn = get_connection(db_path)
+        try:
+            position = find_craft_position(conn, params, zeny_count)
+            message = explain_missing_craft(conn, params.batch_id, zeny_count) if position is None else ""
+        finally:
+            conn.close()
+        if position is None:
+            status_text.value = message
+            page.update()
+            return
+
+        highlighted_count = position
+        params.offset = ((position - 1) // _PAGE_SIZE) * _PAGE_SIZE
+        page.run_thread(run_search_page, params.offset, params)
+
+    def on_jump_to_craft(e) -> None:
+        do_jump_to_craft()
+
+    jump_to_craft_button.on_click = on_jump_to_craft
+    jump_to_craft_field.on_submit = on_jump_to_craft
 
     search_button.on_click = on_search_click
     for btn in prev_buttons:
@@ -833,6 +897,7 @@ def build_search_view(
         date_from_dropdown.value = _UNSELECTED
         date_to_dropdown.value = _UNSELECTED
         jump_to_count_field.value = ""
+        jump_to_craft_field.value = ""
         condition_section.visible = False
         condition_toggle_button.content = "検索条件を変更"
 
@@ -867,7 +932,16 @@ def build_search_view(
             ft.Row([search_button]),
             progress_bar,
             status_text,
-            ft.Row([prev_button_top, next_button_top, jump_to_count_field, jump_to_count_button]),
+            ft.Row(
+                [
+                    prev_button_top,
+                    next_button_top,
+                    jump_to_count_field,
+                    jump_to_count_button,
+                    jump_to_craft_field,
+                    jump_to_craft_button,
+                ]
+            ),
             ft.Divider(),
             results_list,
             ft.Divider(),

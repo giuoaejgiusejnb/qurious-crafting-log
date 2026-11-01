@@ -8,8 +8,10 @@ MAX_THRESHOLD = 4
 # 並び替え条件。値はSQLのORDER BY句（方向は固定）。
 # 「練成順」は、取込バッチが新しい順（＝取込が新しいバッチが先）に並べ、
 # 同一バッチ内では練成回数の昇順（1回目→最後）に並べる複合ソート。
+# 「コストが高い順」の同じコストどうしは練成順に並べる（並びを決めておかないと、ページ送りと
+# 練成回数での移動とで、同じコストの行の順番が食い違うことがある）。
 SORT_OPTIONS: dict[str, str] = {
-    "total_cost_desc": "r.total_cost DESC",
+    "total_cost_desc": "r.total_cost DESC, r.batch_id DESC, r.zeny_count ASC",
     "craft_order": "r.batch_id DESC, r.zeny_count ASC",
 }
 DEFAULT_SORT = "craft_order"
@@ -167,6 +169,64 @@ def count_results(conn: sqlite3.Connection, params: SearchParams) -> int:
     from_and_where, query_args = _build_filtered_from_and_where(params)
     row = conn.execute(f"SELECT COUNT(*) {from_and_where}", query_args).fetchone()
     return row[0]
+
+
+def find_craft_position(conn: sqlite3.Connection, params: SearchParams, zeny_count: int) -> int | None:
+    """単一バッチの検索（params.batch_id）で、練成回数 zeny_count の行が検索結果の何件目か（1始まり）を返す。
+
+    検索結果に無ければ None（理由は explain_missing_craft）。練成回数はバッチごとに 1 から数えるので、
+    複数バッチの検索では同じ回数の行がいくつもあり、行が決まらない。そのため単一バッチに限る。
+    """
+    if params.batch_id is None:
+        raise ValueError("find_craft_position needs params.batch_id")
+    from_and_where, query_args = _build_filtered_from_and_where(params)
+    row = conn.execute(
+        f"""
+        SELECT position FROM (
+            SELECT r.zeny_count AS zeny_count, ROW_NUMBER() OVER (ORDER BY {SORT_OPTIONS[params.sort]}) AS position
+            {from_and_where}
+        )
+        WHERE zeny_count = ?
+        """,
+        [*query_args, zeny_count],
+    ).fetchone()
+    return row[0] if row else None
+
+
+def explain_missing_craft(conn: sqlite3.Connection, batch_id: int, zeny_count: int) -> str:
+    """練成回数 zeny_count の行が、単一バッチの検索結果に無い理由を、検索タブに出す文で返す。"""
+    if conn.execute(
+        "SELECT 1 FROM results WHERE batch_id = ? AND zeny_count = ?", (batch_id, zeny_count)
+    ).fetchone():
+        return f"{zeny_count}回目は検索条件に合わないため、検索結果にありません。"
+    kinds = {
+        kind
+        for (kind,) in conn.execute(
+            "SELECT kind FROM import_issues WHERE batch_id = ? AND zeny_count = ?", (batch_id, zeny_count)
+        )
+    }
+    if "unread" in kinds:
+        return (
+            f"{zeny_count}回目は確認が必要な画像のため、取り込まれていません。"
+            "画像は履歴タブの「エラー」欄から見られます。"
+        )
+    # 読み込みできなかった行の回は、欠番（飛ばされている練成）としても記録されるので、先に見る
+    if "unparsable" in kinds:
+        return (
+            f"{zeny_count}回目は読み込みできなかった行のため、取り込まれていません"
+            "（履歴タブの「エラー」欄）。"
+        )
+    if "skipped" in kinds:
+        return (
+            f"{zeny_count}回目は記録が飛ばされているため、取り込まれていません"
+            "（履歴タブの「エラー」欄の「飛ばされている練成」）。"
+        )
+    first, last = conn.execute(
+        "SELECT MIN(zeny_count), MAX(zeny_count) FROM results WHERE batch_id = ?", (batch_id,)
+    ).fetchone()
+    if first is not None and not first <= zeny_count <= last:
+        return f"{zeny_count}回目はこのバッチにありません（このバッチは{first}〜{last}回目です）。"
+    return f"{zeny_count}回目はこのバッチに記録がありません。"
 
 
 def fetch_skill_breakdown(
