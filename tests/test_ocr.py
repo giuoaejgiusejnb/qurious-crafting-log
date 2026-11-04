@@ -189,6 +189,29 @@ def test_matching_is_not_loosened():
     assert slots.match(thin) == count and slots.labels[count] is None
 
 
+def test_glyph_matching_allows_a_slightly_different_digit():
+    """文字だけは基準が 0.18 未満。同じ数字の少し違う描かれ方（違い 0.15〜0.18）は、その数字の見本に当てる。
+
+    違うラベルの見本どうしでいちばん近い「6」と「8」は、基準より十分離れている。
+    """
+    import numpy as np
+
+    from app.ocr.kuijin_ocr import TemplateBank, iou_distance
+
+    glyphs = TemplateBank(BUNDLED_TEMPLATE_DIR, "1280x720", "glyph")
+    count, index = len(glyphs.labels), glyphs.labels.index("3")
+    thin = glyphs.bits[index].copy()
+    ink = np.flatnonzero(thin)
+    thin[ink[: len(ink) // 6]] = False   # 墨の 1/6 を消す（全体の違い 0.167）
+    assert 0.15 < iou_distance(glyphs.bits[index][None], thin)[0] < 0.18
+    assert glyphs.labels[glyphs.match(thin)] == "3" and len(glyphs.labels) == count
+
+    digits = [i for i, lab in enumerate(glyphs.labels) if lab in ("6", "8")]
+    closest = min(iou_distance(glyphs.bits[[j for j in digits if glyphs.labels[j] != glyphs.labels[i]]],
+                               glyphs.bits[i]).min() for i in digits)
+    assert closest > 0.20
+
+
 def test_app_reads_with_bundled_templates_only(tmp_path):
     """アプリ（label_dir あり）は同梱の見本だけで読み、保存もラベルの入力もしない。
 
