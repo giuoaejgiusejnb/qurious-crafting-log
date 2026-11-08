@@ -10,6 +10,8 @@
 
 import os
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Callable
 
@@ -19,12 +21,114 @@ import flet as ft
 ImageItem = tuple[int | None, int | None, str, int | None]
 
 
+def _select_with_shell_api(path: str) -> bool:
+    """Shell API の SHOpenFolderAndSelectItems で、フォルダを開いてファイルを選ぶ。できたら True。
+
+    `explorer /select,...` は、新しくウィンドウを開くときにフォルダの読み込み（OneDrive 配下だと遅い）が
+    終わる前に選択の指示が届くと、選択されないことがある（同じフォルダの 2 回目からは選択される）。
+    この API は読み込みを待ってから選ぶので、1 回目から選択される。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        shell32 = ctypes.windll.shell32
+        ole32 = ctypes.windll.ole32
+    except (ImportError, AttributeError, OSError):
+        return False
+    shell32.ILCreateFromPathW.restype = ctypes.c_void_p
+    shell32.ILCreateFromPathW.argtypes = [wintypes.LPCWSTR]
+    shell32.ILFree.argtypes = [ctypes.c_void_p]
+    shell32.SHOpenFolderAndSelectItems.argtypes = [ctypes.c_void_p, wintypes.UINT, ctypes.c_void_p, wintypes.DWORD]
+    # この API は COM の初期化が要る。Flet のイベントは別スレッドで来るので、ここで初期化する
+    init = ole32.CoInitializeEx(None, 0x2)  # COINIT_APARTMENTTHREADED
+    try:
+        pidl = shell32.ILCreateFromPathW(path)
+        if not pidl:
+            return False
+        try:
+            return shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) == 0
+        finally:
+            shell32.ILFree(pidl)
+    finally:
+        if init in (0, 1):  # S_OK / S_FALSE のときだけ後始末する（別のモードで初期化済みなら触らない）
+            ole32.CoUninitialize()
+
+
+def _bring_explorer_to_front(folder: Path, timeout: float = 3.0) -> None:
+    """そのフォルダを開いているエクスプローラーのウィンドウを探して、いちばん前に出す。
+
+    開いたウィンドウはこのアプリの後ろに出る（Windows は、前にいないプロセスがほかのウィンドウを前に出すのを
+    止めるため）。いま前にいるウィンドウ（このアプリ）と入力をつないでから前に出すと、止められない。
+    ウィンドウは少し遅れて出るので、出るまで待つ。
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        user32 = ctypes.windll.user32
+        kernel32 = ctypes.windll.kernel32
+    except (ImportError, AttributeError, OSError):
+        return
+    titles = {folder.name, str(folder)}  # 既定はフォルダ名。「タイトルバーに完全なパスを表示」ならパス
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def find() -> int | None:
+        found: list[int] = []
+
+        def callback(hwnd, _):
+            cls = ctypes.create_unicode_buffer(64)
+            user32.GetClassNameW(hwnd, cls, 64)
+            if cls.value != "CabinetWClass" or not user32.IsWindowVisible(hwnd):
+                return True
+            text = ctypes.create_unicode_buffer(1024)
+            user32.GetWindowTextW(hwnd, text, 1024)
+            title = text.value
+            if any(title == t or title.startswith(t + " - ") for t in titles):
+                found.append(hwnd)
+                return False  # 前にあるものから順に来るので、最初に当たったものを使う
+            return True
+
+        user32.EnumWindows(enum_proc(callback), 0)
+        return found[0] if found else None
+
+    deadline = time.monotonic() + timeout
+    hwnd = find()
+    while hwnd is None and time.monotonic() < deadline:
+        time.sleep(0.1)
+        hwnd = find()
+    if hwnd is None:
+        return
+    if user32.IsIconic(hwnd):
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    # AttachThreadInput はメッセージキューの無いスレッドだと失敗するので、PeekMessage でキューを作っておく
+    msg = wintypes.MSG()
+    user32.PeekMessageW(ctypes.byref(msg), None, 0, 0, 0)  # PM_NOREMOVE
+    fg_thread = user32.GetWindowThreadProcessId(user32.GetForegroundWindow(), None)
+    my_thread = kernel32.GetCurrentThreadId()
+    attached = fg_thread != my_thread and user32.AttachThreadInput(my_thread, fg_thread, True)
+    try:
+        user32.BringWindowToTop(hwnd)
+        user32.SetForegroundWindow(hwnd)
+    finally:
+        if attached:
+            user32.AttachThreadInput(my_thread, fg_thread, False)
+
+
+def _open_and_select(target: Path) -> None:
+    if _select_with_shell_api(str(target)):
+        _bring_explorer_to_front(target.parent)
+        return
+    # explorer は成功しても終了コード 1 を返すので、結果は見ない
+    subprocess.Popen(["explorer", f"/select,{os.path.normpath(target)}"])
+
+
 def open_in_explorer(path: str) -> None:
     """エクスプローラーで、画像を選んだ状態でそのフォルダを開く。画像が無ければ、フォルダだけを開く。"""
     target = Path(path)
     if target.exists():
-        # explorer は成功しても終了コード 1 を返すので、結果は見ない
-        subprocess.Popen(["explorer", f"/select,{os.path.normpath(target)}"])
+        # ウィンドウが出るのを待つので、画面が止まらないよう別のスレッドで開く
+        threading.Thread(target=_open_and_select, args=(target.resolve(),), daemon=True).start()
     elif target.parent.exists():
         subprocess.Popen(["explorer", os.path.normpath(target.parent)])
 
